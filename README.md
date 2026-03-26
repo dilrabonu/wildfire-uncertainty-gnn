@@ -28,5 +28,9 @@ Phase 1: Problem definition and literature review
 - Calibration analysis
 - Intervention simulation
 
+# Original dataset
+https://zenodo.org/records/17579289?jr_id=l_null
+https://www.sciencedirect.com/science/article/pii/S2352340925010248 
+
 ## Author
 Dilrabo Khidirova
