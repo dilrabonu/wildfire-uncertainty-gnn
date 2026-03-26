@@ -1,0 +1,11 @@
+model:
+  name: gat
+  input_dim: 16
+  hidden_dim: 64
+  output_dim: 1
+  num_layers: 3
+  dropout: 0.3
+
+uncertainty:
+  method: mc_dropout
+  mc_samples: 20

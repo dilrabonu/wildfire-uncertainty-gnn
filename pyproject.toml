@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wildfire-gnn"
+version = "0.1.0"
+description = "Uncertainty-calibrated intervention-aware spatiotemporal GNN for wildfire spread"
+authors = [
+    {name = "Dilrabo Khidirova"}
+]
+requires-python = ">=3.11"

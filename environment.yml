@@ -1,0 +1,34 @@
+name: wildfire_gnn
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - scipy
+  - jupyter
+  - ipykernel
+  - geopandas
+  - rasterio
+  - shapely
+  - networkx
+  - xarray
+  - pip:
+      - torch
+      - torchvision
+      - torchaudio
+      - torch-geometric
+      - pyyaml
+      - tqdm
+      - pytest
+      - black
+      - isort
+      - flake8
+      - mypy
+      - python-dotenv
+      - rich
+      - netcal
