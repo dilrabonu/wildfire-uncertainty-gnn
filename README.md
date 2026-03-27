@@ -30,6 +30,7 @@ Phase 1: Problem definition and literature review
 
 conda create -n wildfire_gnn python=3.11 -y
 conda activate wildfire_gnn
+conda activate wildfire_gnn
 
 # Original dataset
 https://zenodo.org/records/17579289?jr_id=l_null
