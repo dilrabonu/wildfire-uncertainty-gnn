@@ -1,12 +1,36 @@
-data:
+project:
+  name: wildfire-uncertainty-gnn
+  random_seed: 42
+
+paths:
   raw_dir: data/raw
   interim_dir: data/interim
   processed_dir: data/processed
-  metadata_file: data/external/metadata.json
+  external_dir: data/external
+
+dataset:
+  raw_files_dirname: FSim_Dataset_Greece_raw_files
+  gdb_dirname: FSim_Dataset_Greece.gdb
+  metadata_dirname: Metadata
+  styles_dirname: FSim_Dataset_Greece_LYR_files_ARCGIS_QGIS_ARCGISPRO
+
+layers:
+  rasters:
+    - Burn_Prob.img
+    - CFL.img
+    - FSP_Index.img
+    - Fuel_Models.img
+    - Ignition_Prob.img
+    - Struct_Exp_Index.img
+  vectors:
+    - Fire_Ignitions.shp
+    - Fire_Perimeters.shp
+    - Pyromes.shp
+
+targets:
+  primary_target: Burn_Prob.img
 
 graph:
-  neighborhood: 8
-  include_self_loops: false
-
-target:
-  type: burn_probability
+  connectivity: 8
+  include_coordinates: true
+  normalize_features: true
