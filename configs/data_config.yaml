@@ -37,6 +37,10 @@ graph:
   coordinate_mode: normalized_row_col
   normalize_continuous_features: true
 
+  # memory-safe prototype controls
+  downsample_factor: 4
+  max_nodes: 300000
+
 alignment:
   reference_raster: Burn_Prob.img
   continuous_resampling: bilinear

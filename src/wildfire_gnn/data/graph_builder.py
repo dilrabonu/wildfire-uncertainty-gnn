@@ -50,13 +50,26 @@ class WildfireGraphBuilder:
             config["graph"]["normalize_continuous_features"]
         )
 
+        self.max_nodes = config["graph"].get("max_nodes")
+        self.downsample_factor = int(config["graph"].get("downsample_factor", 1))
+
         self.output_graph_path = Path(config["output"]["graph_data_path"])
         self.aligned_stack_dir = Path(config["output"]["aligned_stack_dir"])
 
     def _get_reference_raster(self) -> ReferenceRaster:
-        """Load the target raster and use it as the reference grid."""
         target_path = self.dataset_manager.paths.raw_files_dir / self.target_name
         array, meta = read_single_band_raster(target_path)
+
+        if self.downsample_factor > 1:
+            array = array[:: self.downsample_factor, :: self.downsample_factor]
+
+            transform = meta["transform"] * rasterio.Affine.scale(
+                self.downsample_factor, self.downsample_factor
+            )
+
+            meta = meta.copy()
+            meta["transform"] = transform
+            meta["height"], meta["width"] = array.shape
 
         return ReferenceRaster(
             array=array,
@@ -85,7 +98,6 @@ class WildfireGraphBuilder:
         reference: ReferenceRaster,
         resampling: Resampling,
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        """Reproject/resample a source raster onto the reference grid."""
         source_path = Path(source_path)
 
         with rasterio.open(source_path) as src:
@@ -123,7 +135,6 @@ class WildfireGraphBuilder:
         return dst_array, dst_meta
 
     def align_all_features(self) -> tuple[ReferenceRaster, dict[str, np.ndarray]]:
-        """Align all configured features to the reference target grid."""
         reference = self._get_reference_raster()
 
         aligned_features: dict[str, np.ndarray] = {}
@@ -163,7 +174,6 @@ class WildfireGraphBuilder:
         reference: ReferenceRaster,
         aligned_features: dict[str, np.ndarray],
     ) -> np.ndarray:
-        """Build a valid mask requiring valid target and valid aligned features."""
         valid_mask = build_valid_data_mask(reference.array, nodata=reference.nodata)
 
         for name, arr in aligned_features.items():
@@ -176,12 +186,36 @@ class WildfireGraphBuilder:
         return valid_mask
 
     @staticmethod
+    def _clean_continuous_values(values: np.ndarray) -> np.ndarray:
+        values = values.astype(np.float32, copy=False)
+        mask = np.isfinite(values)
+        cleaned = values[mask]
+
+        if cleaned.size == 0:
+            raise ValueError("No valid finite values available for normalization.")
+
+        return cleaned
+
+    @staticmethod
     def _normalize_feature(values: np.ndarray) -> np.ndarray:
-        mean = np.mean(values)
-        std = np.std(values)
-        if std == 0:
-            return values - mean
-        return (values - mean) / std
+        values = values.astype(np.float32, copy=False)
+
+        finite_mask = np.isfinite(values)
+        if not np.all(finite_mask):
+            raise ValueError("Feature contains non-finite values before normalization.")
+
+        values64 = values.astype(np.float64, copy=False)
+        mean = np.mean(values64)
+        std = np.std(values64)
+
+        if not np.isfinite(mean) or not np.isfinite(std):
+            raise ValueError("Normalization statistics are not finite.")
+
+        if std < 1e-12:
+            return (values64 - mean).astype(np.float32)
+
+        normalized = (values64 - mean) / std
+        return normalized.astype(np.float32)
 
     def build_node_features_and_target(
         self,
@@ -189,23 +223,48 @@ class WildfireGraphBuilder:
         aligned_features: dict[str, np.ndarray],
         valid_mask: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Construct node feature matrix, target vector, positions, and node index map."""
         row_indices, col_indices = np.where(valid_mask)
         num_nodes = len(row_indices)
 
-        self.logger.info("Number of valid nodes: %d", num_nodes)
+        if self.max_nodes is not None and num_nodes > self.max_nodes:
+            self.logger.info(
+                "Subsampling nodes from %d to %d for memory-safe prototype.",
+                num_nodes,
+                self.max_nodes,
+            )
+            rng = np.random.default_rng(seed=int(self.config["project"]["random_seed"]))
+            chosen = rng.choice(num_nodes, size=int(self.max_nodes), replace=False)
+            row_indices = row_indices[chosen]
+            col_indices = col_indices[chosen]
+            num_nodes = len(row_indices)
+
+        self.logger.info("Number of valid nodes used: %d", num_nodes)
 
         feature_columns: list[np.ndarray] = []
 
         for feature_name in self.continuous_features:
-            values = aligned_features[feature_name][valid_mask].astype(np.float32)
+            full_values = aligned_features[feature_name][row_indices, col_indices].astype(np.float32)
+
             if self.normalize_continuous_features:
-                values = self._normalize_feature(values)
-            feature_columns.append(values.reshape(-1, 1))
+                full_values = self._normalize_feature(full_values)
+
+            feature_columns.append(full_values.reshape(-1, 1))
+            self.logger.info(
+                "Continuous feature %s | min=%.4f max=%.4f",
+                feature_name,
+                float(np.min(full_values)),
+                float(np.max(full_values)),
+            )
 
         for feature_name in self.categorical_features:
-            values = aligned_features[feature_name][valid_mask].astype(np.float32)
+            values = aligned_features[feature_name][row_indices, col_indices].astype(np.float32)
             feature_columns.append(values.reshape(-1, 1))
+            self.logger.info(
+                "Categorical feature %s | min=%.4f max=%.4f",
+                feature_name,
+                float(np.min(values)),
+                float(np.max(values)),
+            )
 
         if self.include_coordinates:
             if self.coordinate_mode == "normalized_row_col":
@@ -217,20 +276,22 @@ class WildfireGraphBuilder:
                 raise ValueError(f"Unsupported coordinate_mode: {self.coordinate_mode}")
 
         x = np.concatenate(feature_columns, axis=1).astype(np.float32)
-        y = reference.array[valid_mask].astype(np.float32).reshape(-1, 1)
+        y = reference.array[row_indices, col_indices].astype(np.float32).reshape(-1, 1)
         pos = np.stack([row_indices, col_indices], axis=1).astype(np.int64)
+
+        sampled_mask = np.zeros(valid_mask.shape, dtype=bool)
+        sampled_mask[row_indices, col_indices] = True
 
         node_index_map = np.full(valid_mask.shape, fill_value=-1, dtype=np.int64)
         node_index_map[row_indices, col_indices] = np.arange(num_nodes, dtype=np.int64)
 
-        return x, y, pos, node_index_map
+        return x, y, pos, node_index_map, sampled_mask
 
     def build_edge_index(
         self,
-        valid_mask: np.ndarray,
+        active_mask: np.ndarray,
         node_index_map: np.ndarray,
     ) -> np.ndarray:
-        """Construct graph edges using grid connectivity."""
         if self.connectivity == 4:
             neighbor_offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         elif self.connectivity == 8:
@@ -241,16 +302,16 @@ class WildfireGraphBuilder:
         else:
             raise ValueError("Connectivity must be either 4 or 8.")
 
-        rows, cols = np.where(valid_mask)
+        rows, cols = np.where(active_mask)
         edges: list[tuple[int, int]] = []
 
-        height, width = valid_mask.shape
+        height, width = active_mask.shape
 
         for r, c in zip(rows, cols):
             src_idx = node_index_map[r, c]
             for dr, dc in neighbor_offsets:
                 nr, nc = r + dr, c + dc
-                if 0 <= nr < height and 0 <= nc < width and valid_mask[nr, nc]:
+                if 0 <= nr < height and 0 <= nc < width and active_mask[nr, nc]:
                     dst_idx = node_index_map[nr, nc]
                     edges.append((src_idx, dst_idx))
 
@@ -259,7 +320,6 @@ class WildfireGraphBuilder:
         return edge_index
 
     def build_pyg_data(self) -> Any:
-        """Build a PyTorch Geometric Data object."""
         if torch is None or Data is None:
             raise ImportError(
                 "torch and torch_geometric are required to build the PyG graph object."
@@ -268,13 +328,14 @@ class WildfireGraphBuilder:
         reference, aligned_features = self.align_all_features()
         valid_mask = self.build_valid_mask(reference, aligned_features)
 
-        x, y, pos, node_index_map = self.build_node_features_and_target(
+        x, y, pos, node_index_map, active_mask = self.build_node_features_and_target(
             reference=reference,
             aligned_features=aligned_features,
             valid_mask=valid_mask,
         )
+
         edge_index = self.build_edge_index(
-            valid_mask=valid_mask,
+            active_mask=active_mask,
             node_index_map=node_index_map,
         )
 
@@ -286,6 +347,7 @@ class WildfireGraphBuilder:
         )
 
         data.num_nodes_original_grid = int(reference.height * reference.width)
+        data.num_valid_nodes_before_sampling = int(valid_mask.sum())
         data.num_valid_nodes = int(x.shape[0])
         data.reference_height = int(reference.height)
         data.reference_width = int(reference.width)
@@ -297,7 +359,6 @@ class WildfireGraphBuilder:
         return data
 
     def save_pyg_data(self, data: Any) -> None:
-        """Save PyG graph object."""
         if torch is None:
             raise ImportError("torch is required to save graph data.")
 
