@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from wildfire_gnn.data.loader import WildfireDatasetManager
+from wildfire_gnn.data.preprocessing import read_single_band_raster, summarize_array
+from wildfire_gnn.data.simulation_parser import discover_metadata_files
+from wildfire_gnn.utils.config import load_yaml_config
+from wildfire_gnn.utils.logger import get_logger
+from wildfire_gnn.utils.seed import set_global_seed
+
+
+def main() -> None:
+    config = load_yaml_config("configs/data_config.yaml")
+    logger = get_logger("preprocess_data", log_file="reports/logs/preprocess_data.log")
+
+    seed = int(config["project"]["random_seed"])
+    set_global_seed(seed)
+    logger.info("Global seed set to %d", seed)
+
+    manager = WildfireDatasetManager(config)
+    manager.validate_structure()
+
+    raster_files = manager.list_raster_files()
+    vector_files = manager.list_vector_files()
+    metadata_files = discover_metadata_files(manager.paths.metadata_dir)
+
+    logger.info("Raster files found: %d", len(raster_files))
+    logger.info("Vector files found: %d", len(vector_files))
+    logger.info("Metadata files found: %d", len(metadata_files))
+
+    for raster_path in raster_files:
+        array, meta = read_single_band_raster(raster_path)
+        stats = summarize_array(array, nodata=meta.get("nodata"))
+
+        logger.info("Raster: %s", raster_path.name)
+        logger.info(
+            "Shape=%s | CRS=%s | Bounds=%s | Stats=%s",
+            array.shape,
+            meta.get("crs"),
+            meta.get("bounds"),
+            stats,
+        )
+
+    gdb_layers = manager.list_gdb_layers()
+    logger.info("GDB layers: %s", gdb_layers)
+
+    out_path = Path("reports/logs/dataset_inventory.txt")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with out_path.open("w", encoding="utf-8") as f:
+        f.write("DATASET INVENTORY\n")
+        f.write("=================\n\n")
+
+        f.write("Rasters:\n")
+        for p in raster_files:
+            f.write(f"- {p}\n")
+
+        f.write("\nVectors:\n")
+        for p in vector_files:
+            f.write(f"- {p}\n")
+
+        f.write("\nMetadata:\n")
+        for p in metadata_files:
+            f.write(f"- {p}\n")
+
+        f.write("\nGDB Layers:\n")
+        for layer in gdb_layers:
+            f.write(f"- {layer}\n")
+
+    logger.info("Dataset inventory saved to %s", out_path)
+
+
+if __name__ == "__main__":
+    main()
