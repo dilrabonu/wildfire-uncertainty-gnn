@@ -15,22 +15,33 @@ dataset:
   styles_dirname: FSim_Dataset_Greece_LYR_files_ARCGIS_QGIS_ARCGISPRO
 
 layers:
-  rasters:
-    - Burn_Prob.img
+  target: Burn_Prob.img
+
+  continuous_features:
     - CFL.img
     - FSP_Index.img
-    - Fuel_Models.img
     - Ignition_Prob.img
     - Struct_Exp_Index.img
+
+  categorical_features:
+    - Fuel_Models.img
+
   vectors:
     - Fire_Ignitions.shp
     - Fire_Perimeters.shp
     - Pyromes.shp
 
-targets:
-  primary_target: Burn_Prob.img
-
 graph:
   connectivity: 8
   include_coordinates: true
-  normalize_features: true
+  coordinate_mode: normalized_row_col
+  normalize_continuous_features: true
+
+alignment:
+  reference_raster: Burn_Prob.img
+  continuous_resampling: bilinear
+  categorical_resampling: nearest
+
+output:
+  graph_data_path: data/processed/graph_data.pt
+  aligned_stack_dir: data/interim/aligned
