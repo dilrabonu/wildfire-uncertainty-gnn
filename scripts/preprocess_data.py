@@ -31,19 +31,30 @@ def main() -> None:
 
     for raster_path in raster_files:
         array, meta = read_single_band_raster(raster_path)
-        stats = summarize_array(array, nodata=meta.get("nodata"))
+
+        try:
+            stats = summarize_array(array, nodata=meta.get("nodata"))
+        except ValueError as exc:
+            logger.warning("Could not summarize raster %s: %s", raster_path.name, exc)
+            continue
 
         logger.info("Raster: %s", raster_path.name)
         logger.info(
-            "Shape=%s | CRS=%s | Bounds=%s | Stats=%s",
+            "Shape=%s | DType=%s | CRS=%s | Bounds=%s | NoData=%s | Stats=%s",
             array.shape,
+            meta.get("dtype"),
             meta.get("crs"),
             meta.get("bounds"),
+            meta.get("nodata"),
             stats,
         )
 
-    gdb_layers = manager.list_gdb_layers()
-    logger.info("GDB layers: %s", gdb_layers)
+    try:
+        gdb_layers = manager.list_gdb_layers()
+        logger.info("GDB layers: %s", gdb_layers)
+    except ImportError as exc:
+        logger.warning("Skipping GDB layer listing: %s", exc)
+        gdb_layers = []
 
     out_path = Path("reports/logs/dataset_inventory.txt")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,8 +76,11 @@ def main() -> None:
             f.write(f"- {p}\n")
 
         f.write("\nGDB Layers:\n")
-        for layer in gdb_layers:
-            f.write(f"- {layer}\n")
+        if gdb_layers:
+            for layer in gdb_layers:
+                f.write(f"- {layer}\n")
+        else:
+            f.write("- Not available yet (install fiona to inspect .gdb layers)\n")
 
     logger.info("Dataset inventory saved to %s", out_path)
 

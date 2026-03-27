@@ -31,7 +31,6 @@ class WildfireDatasetManager:
         dataset_cfg = config["dataset"]
 
         raw_dir = Path(paths_cfg["raw_dir"])
-        external_dir = Path(paths_cfg["external_dir"])
 
         self.paths = DatasetPaths(
             raw_dir=raw_dir,
@@ -40,8 +39,6 @@ class WildfireDatasetManager:
             metadata_dir=raw_dir / dataset_cfg["metadata_dirname"],
             styles_dir=raw_dir / dataset_cfg["styles_dirname"],
         )
-
-        self.external_dir = external_dir
 
     def validate_structure(self) -> None:
         """Validate that the expected dataset folders exist."""
@@ -55,9 +52,7 @@ class WildfireDatasetManager:
 
         missing = [name for name, path in expected_paths.items() if not path.exists()]
         if missing:
-            details = "\n".join(
-                f"- {name}: {expected_paths[name]}" for name in missing
-            )
+            details = "\n".join(f"- {name}: {expected_paths[name]}" for name in missing)
             raise FileNotFoundError(f"Missing dataset paths:\n{details}")
 
         self.logger.info("Dataset structure validation passed.")
@@ -91,14 +86,7 @@ class WildfireDatasetManager:
         return found_files
 
     def open_raster(self, raster_path: str | Path) -> DatasetReader:
-        """Open a raster file with rasterio.
-
-        Args:
-            raster_path: Path to the raster.
-
-        Returns:
-            Open rasterio dataset reader.
-        """
+        """Open a raster file with rasterio."""
         path = Path(raster_path)
         if not path.exists():
             raise FileNotFoundError(f"Raster not found: {path}")
@@ -107,14 +95,7 @@ class WildfireDatasetManager:
         return rasterio.open(path)
 
     def load_vector(self, vector_path: str | Path) -> gpd.GeoDataFrame:
-        """Load a shapefile/vector dataset.
-
-        Args:
-            vector_path: Path to the vector file.
-
-        Returns:
-            GeoDataFrame.
-        """
+        """Load a vector dataset."""
         path = Path(vector_path)
         if not path.exists():
             raise FileNotFoundError(f"Vector file not found: {path}")
@@ -129,9 +110,10 @@ class WildfireDatasetManager:
 
         try:
             import fiona
-        except ImportError as e:  # pragma: no cover
+        except ImportError as e:
             raise ImportError(
-                "fiona is required to inspect geodatabase layers. Install geopandas/fiona."
+                "fiona is required to inspect geodatabase layers. "
+                "Install it with: conda install -c conda-forge fiona -y"
             ) from e
 
         layers = fiona.listlayers(str(self.paths.gdb_dir))
