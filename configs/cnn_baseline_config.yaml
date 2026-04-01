@@ -3,13 +3,13 @@ project:
   random_seed: 42
 
 paths:
-  target_raster_path: data/interim/aligned/Burn_Prob.img
+  target_raster_path: data/raw/FSim_Dataset_Greece_raw_files/Burn_Prob.img
   feature_raster_paths:
-    - data/interim/aligned/CFL.img
-    - data/interim/aligned/FSP_Index.img
-    - data/interim/aligned/Ignition_Prob.img
-    - data/interim/aligned/Struct_Exp_Index.img
-    - data/interim/aligned/Fuel_Models.img
+    - data/raw/FSim_Dataset_Greece_raw_files/CFL.img
+    - data/raw/FSim_Dataset_Greece_raw_files/FSP_Index.img
+    - data/raw/FSim_Dataset_Greece_raw_files/Ignition_Prob.img
+    - data/raw/FSim_Dataset_Greece_raw_files/Struct_Exp_Index.img
+    - data/raw/FSim_Dataset_Greece_raw_files/Fuel_Models.img
 
   patch_metadata_path: data/processed/cnn_patch_metadata.csv
   random_split_path: data/processed/cnn_splits_random.npz

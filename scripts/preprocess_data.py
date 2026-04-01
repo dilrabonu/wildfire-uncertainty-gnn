@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from wildfire_gnn.data.loader import WildfireDatasetManager
-from wildfire_gnn.data.preprocessing import read_single_band_raster, summarize_array
+from wildfire_gnn.data.preprocessing import (
+    align_feature_stack_to_reference,
+    read_single_band_raster,
+    summarize_array,
+)
 from wildfire_gnn.data.simulation_parser import discover_metadata_files
 from wildfire_gnn.utils.config import load_yaml_config
 from wildfire_gnn.utils.logger import get_logger
@@ -83,6 +87,49 @@ def main() -> None:
             f.write("- Not available yet (install fiona to inspect .gdb layers)\n")
 
     logger.info("Dataset inventory saved to %s", out_path)
+
+   
+    raw_raster_dir = manager.paths.raw_raster_dir
+    aligned_dir = Path("data/interim/aligned")
+
+    logger.info("Starting raster alignment...")
+    logger.info("Reference raster: Burn_Prob.img")
+    logger.info("Raw raster dir: %s", raw_raster_dir)
+    logger.info("Aligned output dir: %s", aligned_dir)
+
+    saved_paths = align_feature_stack_to_reference(
+        raw_dir=raw_raster_dir,
+        output_dir=aligned_dir,
+        reference_filename="Burn_Prob.img",
+    )
+
+    logger.info("Aligned rasters saved successfully:")
+    for path in saved_paths:
+        logger.info("  %s", path)
+
+  
+    logger.info("Verifying aligned rasters...")
+    for aligned_path in saved_paths:
+        array, meta = read_single_band_raster(aligned_path)
+
+        try:
+            stats = summarize_array(array, nodata=meta.get("nodata"))
+        except ValueError as exc:
+            logger.warning("Could not summarize aligned raster %s: %s", aligned_path.name, exc)
+            continue
+
+        logger.info("Aligned Raster: %s", aligned_path.name)
+        logger.info(
+            "Shape=%s | DType=%s | CRS=%s | Transform=%s | NoData=%s | Stats=%s",
+            array.shape,
+            meta.get("dtype"),
+            meta.get("crs"),
+            meta.get("transform"),
+            meta.get("nodata"),
+            stats,
+        )
+
+    logger.info("Preprocessing completed successfully.")
 
 
 if __name__ == "__main__":
