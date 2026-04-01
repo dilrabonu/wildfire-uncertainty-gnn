@@ -1,0 +1,65 @@
+project:
+  name: wildfire-uncertainty-gnn
+  random_seed: 42
+
+paths:
+  target_raster_path: data/interim/aligned/Burn_Prob.img
+  feature_raster_paths:
+    - data/interim/aligned/CFL.img
+    - data/interim/aligned/FSP_Index.img
+    - data/interim/aligned/Ignition_Prob.img
+    - data/interim/aligned/Struct_Exp_Index.img
+    - data/interim/aligned/Fuel_Models.img
+
+  patch_metadata_path: data/processed/cnn_patch_metadata.csv
+  random_split_path: data/processed/cnn_splits_random.npz
+  spatial_split_path: data/processed/cnn_splits_spatial.npz
+
+outputs:
+  metrics_table_path: reports/tables/cnn_metrics.csv
+  predictions_dir: reports/tables
+  figures_dir: reports/figures
+  checkpoints_dir: reports/checkpoints
+  logs_dir: reports/logs
+
+data:
+  patch_size: 15
+  target_min: 0.0
+  target_max: 1.0
+  standardize_continuous_channels: true
+
+split:
+  random:
+    train_size: 0.70
+    val_size: 0.15
+    test_size: 0.15
+
+  spatial:
+    enabled: true
+    n_row_blocks: 8
+    n_col_blocks: 8
+    train_blocks: 0.70
+    val_blocks: 0.15
+    test_blocks: 0.15
+
+train:
+  batch_size: 256
+  num_workers: 0
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  max_epochs: 30
+  early_stopping_patience: 6
+  device: auto
+
+model:
+  in_channels: 5
+  base_channels: 32
+  dropout: 0.20
+
+evaluation:
+  metrics:
+    - rmse
+    - mae
+    - r2
+    - pearson
+    - spearman
