@@ -1,0 +1,52 @@
+project:
+  name: wildfire-uncertainty-gnn
+  random_seed: 42
+
+paths:
+  graph_data_path: data/processed/graph_data.pt
+  baseline_dataset_path: data/processed/baseline_dataset.csv
+  baseline_splits_path: data/processed/baseline_splits.npz
+
+outputs:
+  metrics_table_path: reports/tables/baseline_metrics.csv
+  feature_summary_table_path: reports/tables/baseline_feature_summary.csv
+  figures_dir: reports/figures
+  logs_dir: reports/logs
+
+split:
+  method: random
+  train_size: 0.70
+  val_size: 0.15
+  test_size: 0.15
+
+models:
+  random_forest:
+    n_estimators: 200
+    max_depth: 20
+    min_samples_split: 4
+    min_samples_leaf: 2
+    n_jobs: -1
+
+  xgboost:
+    n_estimators: 300
+    max_depth: 8
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+
+  mlp:
+    hidden_layer_sizes: [128, 64]
+    activation: relu
+    alpha: 0.0001
+    batch_size: 1024
+    learning_rate_init: 0.001
+    max_iter: 100
+    early_stopping: true
+
+evaluation:
+  metrics:
+    - rmse
+    - mae
+    - r2
