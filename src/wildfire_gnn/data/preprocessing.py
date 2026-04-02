@@ -10,6 +10,8 @@ from rasterio.warp import reproject
 
 
 FLOAT32_NODATA_SENTINEL = np.float32(-3.4028235e38)
+SAFE_FLOAT_NODATA = np.float32(-9999.0)
+SAFE_UINT8_NODATA = np.uint8(0)
 
 
 def read_single_band_raster(
@@ -100,6 +102,23 @@ def summarize_array(
     }
 
 
+def _choose_destination_dtype_and_nodata(
+    src_arr: np.ndarray,
+    resampling: Resampling,
+) -> tuple[np.dtype, float | int]:
+    """
+    Choose a safe destination dtype and nodata value.
+
+    Rules:
+    - integer categorical rasters resampled with nearest keep integer dtype
+    - all other rasters become float32
+    """
+    if resampling == Resampling.nearest and np.issubdtype(src_arr.dtype, np.integer):
+        return src_arr.dtype, int(SAFE_UINT8_NODATA)
+
+    return np.float32, float(SAFE_FLOAT_NODATA)
+
+
 def align_raster_to_reference(
     src_path: str | Path,
     reference_path: str | Path,
@@ -126,20 +145,18 @@ def align_raster_to_reference(
         ref_transform = ref.transform
         ref_width = ref.width
         ref_height = ref.height
-        ref_nodata = ref.nodata
 
     with rasterio.open(src_path) as src:
         src_arr = src.read(1)
 
-        # destination array uses float32 for continuous rasters
-        if resampling == Resampling.nearest and np.issubdtype(src_arr.dtype, np.integer):
-            dst_dtype = src_arr.dtype
-        else:
-            dst_dtype = np.float32
+        dst_dtype, dst_nodata = _choose_destination_dtype_and_nodata(
+            src_arr=src_arr,
+            resampling=resampling,
+        )
 
         dst_arr = np.full(
             (ref_height, ref_width),
-            ref_nodata if ref_nodata is not None else 0,
+            dst_nodata,
             dtype=dst_dtype,
         )
 
@@ -151,17 +168,22 @@ def align_raster_to_reference(
             src_nodata=src.nodata,
             dst_transform=ref_transform,
             dst_crs=ref_crs,
-            dst_nodata=ref_nodata,
+            dst_nodata=dst_nodata,
             resampling=resampling,
         )
+        # Post-process floating rasters to remove extreme invalid values
+        if np.issubdtype(dst_arr.dtype, np.floating):
+            invalid_mask = ~np.isfinite(dst_arr)
+            invalid_mask |= dst_arr < -1e20
+            dst_arr[invalid_mask] = dst_nodata
 
     out_meta = ref_meta.copy()
     out_meta.update(
         {
-            "driver": "HFA",   # creates .img
+            "driver": "HFA",  # creates .img
             "count": 1,
             "dtype": str(dst_arr.dtype),
-            "nodata": ref_nodata,
+            "nodata": dst_nodata,
         }
     )
 

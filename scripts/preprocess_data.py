@@ -89,7 +89,7 @@ def main() -> None:
     logger.info("Dataset inventory saved to %s", out_path)
 
    
-    raw_raster_dir = manager.paths.raw_raster_dir
+    raw_raster_dir = manager.paths.raw_files_dir
     aligned_dir = Path("data/interim/aligned")
 
     logger.info("Starting raster alignment...")
