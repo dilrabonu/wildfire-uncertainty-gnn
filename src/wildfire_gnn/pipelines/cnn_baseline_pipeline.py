@@ -42,8 +42,92 @@ class CNNBaselinePipeline:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(device_cfg)
 
+    def _subsample_metadata(self, metadata_df: pd.DataFrame) -> pd.DataFrame:
+        """Subsample patch metadata using random or stratified sampling."""
+        max_patch_samples = self.config["data"].get("max_patch_samples")
+        if max_patch_samples is None or len(metadata_df) <= int(max_patch_samples):
+            self.logger.info(
+                "No subsampling applied: using all %d patch centers.",
+                len(metadata_df),
+            )
+            return metadata_df.reset_index(drop=True)
+
+        sampling_strategy = str(self.config["data"].get("sampling_strategy", "random")).lower()
+        random_seed = int(self.config["project"]["random_seed"])
+
+        if sampling_strategy == "random":
+            sampled_df = metadata_df.sample(
+                n=int(max_patch_samples),
+                random_state=random_seed,
+            ).reset_index(drop=True)
+
+            self.logger.info(
+                "Applied random subsampling: kept %d / %d patches",
+                len(sampled_df),
+                len(metadata_df),
+            )
+            return sampled_df
+
+        if sampling_strategy == "stratified":
+            bin_edges = self.config["data"]["stratify_bins"]
+            if len(bin_edges) < 2:
+                raise ValueError("stratify_bins must contain at least two bin edges.")
+
+            df = metadata_df.copy()
+            df["target_bin"] = pd.cut(
+                df["target"],
+                bins=bin_edges,
+                include_lowest=True,
+                right=False,
+                duplicates="drop",
+            )
+
+            valid_df = df.dropna(subset=["target_bin"]).copy()
+            if valid_df.empty:
+                raise ValueError("No valid rows remained after target binning.")
+
+            grouped = list(valid_df.groupby("target_bin", observed=False))
+            n_total = int(max_patch_samples)
+            n_groups = len(grouped)
+            per_group = max(1, n_total // n_groups)
+
+            sampled_parts = []
+            for bin_name, group_df in grouped:
+                n_take = min(len(group_df), per_group)
+                sampled = group_df.sample(n=n_take, random_state=random_seed)
+                sampled_parts.append(sampled)
+
+                self.logger.info(
+                    "Stratified bin %s: available=%d sampled=%d",
+                    bin_name,
+                    len(group_df),
+                    n_take,
+                )
+
+            sampled_df = pd.concat(sampled_parts, axis=0)
+
+            remaining = n_total - len(sampled_df)
+            if remaining > 0:
+                remaining_pool = valid_df.drop(index=sampled_df.index, errors="ignore")
+                if len(remaining_pool) > 0:
+                    extra_n = min(remaining, len(remaining_pool))
+                    extra_df = remaining_pool.sample(n=extra_n, random_state=random_seed)
+                    sampled_df = pd.concat([sampled_df, extra_df], axis=0)
+
+            sampled_df = sampled_df.sample(frac=1.0, random_state=random_seed).reset_index(drop=True)
+            sampled_df = sampled_df.drop(columns=["target_bin"], errors="ignore")
+
+            self.logger.info(
+                "Applied stratified subsampling: kept %d / %d patches",
+                len(sampled_df),
+                len(metadata_df),
+            )
+            return sampled_df
+
+        raise ValueError(f"Unsupported sampling_strategy: {sampling_strategy}")
+
     def prepare_dataset(self) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-        """Load rasters, build patch metadata, and save artifacts."""
+        """Load rasters, build patch metadata, subsample, and save artifacts."""
         x_stack, target, channel_stats_df, valid_mask = load_aligned_rasters(
             feature_raster_paths=self.config["paths"]["feature_raster_paths"],
             target_raster_path=self.config["paths"]["target_raster_path"],
@@ -58,11 +142,15 @@ class CNNBaselinePipeline:
             patch_size=int(self.config["data"]["patch_size"]),
         )
 
+        original_count = len(metadata_df)
+        metadata_df = self._subsample_metadata(metadata_df)
+
         save_patch_metadata(metadata_df, self.config["paths"]["patch_metadata_path"])
 
         self.logger.info("Saved patch metadata to %s", self.config["paths"]["patch_metadata_path"])
         self.logger.info(
-            "CNN dataset stats: samples=%d target_min=%.6f target_max=%.6f target_mean=%.6f target_std=%.6f",
+            "CNN dataset stats: original_samples=%d sampled_samples=%d target_min=%.6f target_max=%.6f target_mean=%.6f target_std=%.6f",
+            original_count,
             len(metadata_df),
             metadata_df["target"].min(),
             metadata_df["target"].max(),
