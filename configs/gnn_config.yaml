@@ -28,10 +28,10 @@ model:
 
 uncertainty:
   enabled: true
-  method: gaussian_nll   # mse or gaussian_nll
+  method: gaussian_nll
   mc_dropout: true
   mc_samples: 30
-  min_variance: 1e-6
+  min_variance: 0.000001
 
 training:
   optimizer: adamw
