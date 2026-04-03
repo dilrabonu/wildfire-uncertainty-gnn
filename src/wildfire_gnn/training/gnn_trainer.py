@@ -11,7 +11,7 @@ from wildfire_gnn.evaluation.calibration import (
     expected_calibration_error_regression,
     interval_coverage,
 )
-from wildfire_gnn.evaluation.metrics import regression_metrics
+from wildfire_gnn.evaluation.metrics import compute_regression_metrics
 from wildfire_gnn.training.losses import GaussianNLLLossStable
 
 
