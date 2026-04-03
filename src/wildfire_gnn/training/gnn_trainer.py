@@ -140,7 +140,6 @@ class GNNTrainer:
             y_std = total_std[mask].cpu().numpy().reshape(-1)
 
             split_metrics = compute_regression_metrics(y_true, y_pred)
-            split_metrics = regression_metrics(y_true, y_pred)
             split_metrics["ece_reg"] = expected_calibration_error_regression(y_true, y_pred, y_std)
             split_metrics["coverage_95"] = interval_coverage(y_true, y_pred, y_std)
 
