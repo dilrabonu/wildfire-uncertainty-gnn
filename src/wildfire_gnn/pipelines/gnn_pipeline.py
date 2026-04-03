@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import torch
@@ -30,9 +31,59 @@ def build_model(config: dict):
     raise ValueError(f"Unsupported model: {model_name}")
 
 
+def _load_graph_object(graph_path: str | Path) -> Any:
+    """
+    Load graph artifact safely for trusted local project files.
+
+    PyTorch 2.6 changed torch.load default behavior to weights_only=True,
+    which breaks loading PyG Data objects and other custom serialized objects.
+    """
+    graph_path = Path(graph_path)
+    if not graph_path.exists():
+        raise FileNotFoundError(f"Graph file not found: {graph_path}")
+
+    return torch.load(graph_path, map_location="cpu", weights_only=False)
+
+
+def _extract_graph_data(graph_obj: Any):
+    """
+    Support either:
+    1) a raw PyG Data object
+    2) a dict like {"data": ..., "node_df": ...}
+    """
+    if isinstance(graph_obj, dict):
+        if "data" in graph_obj:
+            return graph_obj["data"]
+        raise KeyError(
+            "Loaded graph object is a dict, but it does not contain key 'data'. "
+            f"Available keys: {list(graph_obj.keys())}"
+        )
+
+    return graph_obj
+
+
+def _validate_graph_masks(data) -> None:
+    """
+    Ensure the graph object already contains train/val/test masks.
+    """
+    required_masks = ["train_mask", "val_mask", "test_mask"]
+    missing = [name for name in required_masks if not hasattr(data, name)]
+
+    if missing:
+        raise AttributeError(
+            "Graph data is missing required masks: "
+            f"{missing}. "
+            "Please attach train/val/test masks before training, "
+            "or update the pipeline to create/load graph splits."
+        )
+
+
 def run_gnn_pipeline(config: dict) -> dict:
     graph_path = config["data"]["graph_data_path"]
-    data = torch.load(graph_path)
+
+    graph_obj = _load_graph_object(graph_path)
+    data = _extract_graph_data(graph_obj)
+    _validate_graph_masks(data)
 
     model = build_model(config)
 
@@ -40,7 +91,11 @@ def run_gnn_pipeline(config: dict) -> dict:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = ckpt_dir / f'{config["model"]["name"]}_{config["split"]["type"]}_best.pt'
 
-    trainer = GNNTrainer(model=model, config=config, device=config["training"]["device"])
+    trainer = GNNTrainer(
+        model=model,
+        config=config,
+        device=config["training"]["device"],
+    )
     output = trainer.train(data, checkpoint_path=checkpoint_path)
 
     metrics_rows = []
