@@ -8,14 +8,16 @@ data:
   use_edge_weights: false
 
 split:
-  type: spatial   # random or spatial
+  type: spatial
   train_ratio: 0.70
   val_ratio: 0.15
   test_ratio: 0.15
+  n_row_blocks: 10
+  n_col_blocks: 10
 
 model:
-  name: gcn       # gcn or gat
-  in_channels: 10
+  name: gcn
+  in_channels: 7
   hidden_channels: 64
   out_channels: 1
   num_layers: 3
