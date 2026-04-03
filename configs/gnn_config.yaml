@@ -1,0 +1,53 @@
+project:
+  name: wildfire-uncertainty-gnn
+  random_seed: 42
+
+data:
+  graph_data_path: data/processed/graph_data.pt
+  target_name: burn_probability
+  use_edge_weights: false
+
+split:
+  type: spatial   # random or spatial
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+model:
+  name: gcn       # gcn or gat
+  in_channels: 10
+  hidden_channels: 64
+  out_channels: 1
+  num_layers: 3
+  dropout: 0.2
+  heads: 4
+  use_batch_norm: true
+  residual: true
+
+uncertainty:
+  enabled: true
+  method: gaussian_nll   # mse or gaussian_nll
+  mc_dropout: true
+  mc_samples: 30
+  min_variance: 1e-6
+
+training:
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  max_epochs: 150
+  early_stopping_patience: 15
+  gradient_clip_norm: 5.0
+  device: cpu
+
+evaluation:
+  save_predictions: true
+  save_node_uncertainty: true
+  calibration_bins: 10
+
+outputs:
+  metrics_path: reports/tables/gnn_metrics.csv
+  predictions_dir: reports/tables
+  figures_dir: reports/figures
+  checkpoints_dir: reports/checkpoints
+  logs_dir: reports/logs
