@@ -133,8 +133,8 @@ def _create_or_load_splits(config: dict, node_df: pd.DataFrame) -> dict[str, Any
     elif split_type == "spatial":
         splits = make_spatial_block_node_split(
             node_df=node_df,
-            n_row_blocks=10,
-            n_col_blocks=10,
+            n_row_blocks=split_cfg["n_row_blocks"],
+            n_col_blocks=split_cfg["n_col_blocks"],
             train_blocks=split_cfg["train_ratio"],
             val_blocks=split_cfg["val_ratio"],
             test_blocks=split_cfg["test_ratio"],
