@@ -1,0 +1,16 @@
+split,bin,count,proportion,run_name
+train,0-0.01,82282,0.41313068932102204,gnn_recovery_v1
+train,0.01-0.05,82524,0.4143457500489539,gnn_recovery_v1
+train,0.05-0.10,23133,0.11614875958366597,gnn_recovery_v1
+train,0.10-0.25,11228,0.05637480104635808,gnn_recovery_v1
+train,0.25+,0,0.0,gnn_recovery_v1
+val,0-0.01,12503,0.3070632152856231,gnn_recovery_v1
+val,0.01-0.05,19893,0.48855543003094454,gnn_recovery_v1
+val,0.05-0.10,6212,0.15256152070337442,gnn_recovery_v1
+val,0.10-0.25,2110,0.05181983398005796,gnn_recovery_v1
+val,0.25+,0,0.0,gnn_recovery_v1
+test,0-0.01,37982,0.6318223405140148,gnn_recovery_v1
+test,0.01-0.05,20513,0.3412293104882309,gnn_recovery_v1
+test,0.05-0.10,1329,0.022107627048157698,gnn_recovery_v1
+test,0.10-0.25,291,0.004840721949596606,gnn_recovery_v1
+test,0.25+,0,0.0,gnn_recovery_v1
