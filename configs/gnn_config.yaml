@@ -4,51 +4,73 @@ project:
 
 data:
   graph_data_path: data/processed/graph_data.pt
-  target_name: burn_probability
-  use_edge_weights: false
 
 split:
   type: spatial
   train_ratio: 0.70
   val_ratio: 0.15
   test_ratio: 0.15
-  n_row_blocks: 10
-  n_col_blocks: 10
+  n_row_blocks: 8
+  n_col_blocks: 8
+
+topology:
+  rebuild_from_pos: true
+  connectivity: 8        
+  use_distance_weights: true
+
+feature_recovery:
+  enabled: true
+
+  
+  add_positional_features: false
+
+  fuel_model_index: 4
+  fuel_encoding: one_hot
+
+  add_degree_feature: true
+
+  add_neighbor_mean_features: true
+  add_neighbor_std_features: false
+
+ 
+  neighbor_summary_feature_indices: [0, 1, 2, 3]
+
+training_target:
+  transform: none         
 
 model:
-  name: gcn
-  in_channels: 7
+  name: gcn              
+  in_channels: 7          
   hidden_channels: 64
-  out_channels: 1
-  num_layers: 3
-  dropout: 0.2
+  num_layers: 2
+  dropout: 0.1
   heads: 4
   use_batch_norm: true
   residual: true
 
 uncertainty:
-  enabled: true
-  method: gaussian_nll
-  mc_dropout: true
-  mc_samples: 30
+  enabled: false
+  method: mse
+  mc_dropout: false
+  mc_samples: 0
   min_variance: 0.000001
 
 training:
   optimizer: adamw
-  learning_rate: 0.001
+  learning_rate: 0.0005
   weight_decay: 0.0001
   max_epochs: 150
-  early_stopping_patience: 15
+  early_stopping_patience: 20
   gradient_clip_norm: 5.0
   device: cpu
 
 evaluation:
   save_predictions: true
-  save_node_uncertainty: true
-  calibration_bins: 10
+  save_split_diagnostics: true
 
 outputs:
   metrics_path: reports/tables/gnn_metrics.csv
+  split_diagnostics_path: reports/tables/gnn_split_diagnostics.csv
   predictions_dir: reports/tables
   figures_dir: reports/figures
   checkpoints_dir: reports/checkpoints
