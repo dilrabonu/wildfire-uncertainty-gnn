@@ -15,7 +15,7 @@ def _normalize_pos(pos: torch.Tensor) -> torch.Tensor:
 
 
 def _one_hot_fuel_column(x: torch.Tensor, fuel_idx: int) -> torch.Tensor:
-    fuel = x[:, fuel_idx].long()
+    fuel = x[:, fuel_idx].round().long()
     fuel = fuel - fuel.min()
     num_classes = int(fuel.max().item()) + 1
     fuel_oh = F.one_hot(fuel, num_classes=num_classes).float()
@@ -82,21 +82,13 @@ def _neighbor_std_features(
 
 
 def add_recovery_features(data, config: dict):
-    """
-    Augment existing graph node features with:
-    - optional positional features
-    - improved fuel encoding
-    - node degree
-    - neighbor summary features
-    """
     if not config["feature_recovery"]["enabled"]:
         return data
 
     x = data.x.float()
-
     fr_cfg = config["feature_recovery"]
 
-    fuel_idx = fr_cfg["fuel_model_index"]
+    fuel_idx = int(fr_cfg["fuel_model_index"])
     fuel_encoding = fr_cfg["fuel_encoding"]
 
     if fuel_encoding == "one_hot":
@@ -115,14 +107,12 @@ def add_recovery_features(data, config: dict):
         x = torch.cat([x, pos_norm], dim=1)
 
     if fr_cfg["add_degree_feature"]:
-        if not hasattr(data, "edge_index") or data.edge_index is None:
-            raise AttributeError("Cannot add degree feature because data.edge_index is missing.")
         dst = data.edge_index[1]
         deg = torch.bincount(dst, minlength=x.shape[0]).float().unsqueeze(1).to(x.device)
         deg = deg / deg.max().clamp_min(1.0)
         x = torch.cat([x, deg], dim=1)
 
-    summary_indices = fr_cfg["neighbor_summary_feature_indices"]
+    summary_indices = [int(i) for i in fr_cfg["neighbor_summary_feature_indices"]]
 
     if fr_cfg["add_neighbor_mean_features"]:
         mean_feats = _neighbor_mean_features(x, data.edge_index, summary_indices)
