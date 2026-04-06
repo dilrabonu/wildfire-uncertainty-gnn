@@ -6,12 +6,18 @@ from typing import Any
 import pandas as pd
 import torch
 
+from wildfire_gnn.data.graph_feature_recovery import add_recovery_features
 from wildfire_gnn.data.graph_splitters import (
     attach_masks_to_graph,
     load_splits,
     make_random_node_split,
     make_spatial_block_node_split,
     save_splits,
+)
+from wildfire_gnn.data.graph_topology import rebuild_spatial_edges_from_pos
+from wildfire_gnn.evaluation.graph_diagnostics import (
+    make_binned_target_distribution,
+    make_split_diagnostics,
 )
 from wildfire_gnn.models.gat_model import GATRegressor
 from wildfire_gnn.models.gcn_model import GCNRegressor
@@ -42,71 +48,29 @@ def _load_graph_object(graph_path: str | Path) -> Any:
     graph_path = Path(graph_path)
     if not graph_path.exists():
         raise FileNotFoundError(f"Graph file not found: {graph_path}")
-
     return torch.load(graph_path, map_location="cpu", weights_only=False)
 
 
-def _extract_graph_and_node_df(graph_obj: Any):
-    """
-    Supported graph artifact formats:
-    1) raw PyG Data object with .pos available
-    2) dict with keys like {"data": ..., "node_df": ...}
-    """
+def _extract_graph_data(graph_obj: Any):
     if isinstance(graph_obj, dict):
-        if "data" not in graph_obj:
-            raise KeyError(
-                "Loaded graph object is a dict, but does not contain key 'data'. "
-                f"Available keys: {list(graph_obj.keys())}"
-            )
-
-        data = graph_obj["data"]
-        node_df = graph_obj.get("node_df", None)
-        return data, node_df
-
-    return graph_obj, None
+        if "data" in graph_obj:
+            return graph_obj["data"]
+        raise KeyError(
+            "Loaded graph object is a dict, but it does not contain key 'data'. "
+            f"Available keys: {list(graph_obj.keys())}"
+        )
+    return graph_obj
 
 
 def _build_node_df_from_graph(data) -> pd.DataFrame:
-    """
-    Build node metadata DataFrame from graph object.
-    Priority:
-    1) row_index / col_index attributes if present
-    2) pos tensor if present
-    """
-    if hasattr(data, "row_index") and hasattr(data, "col_index"):
-        row_index = data.row_index.cpu().numpy().reshape(-1)
-        col_index = data.col_index.cpu().numpy().reshape(-1)
-        return pd.DataFrame({
-            "row_index": row_index,
-            "col_index": col_index,
-        })
-
     if hasattr(data, "pos") and data.pos is not None:
         pos = data.pos.cpu().numpy()
-        if pos.shape[1] < 2:
-            raise ValueError("data.pos exists but does not contain at least 2 columns.")
         return pd.DataFrame({
             "row_index": pos[:, 0].astype(int),
             "col_index": pos[:, 1].astype(int),
         })
 
-    raise AttributeError(
-        "Could not build node_df from graph. "
-        "Expected either graph_obj['node_df'], or data.row_index/data.col_index, or data.pos."
-    )
-
-
-def _resolve_node_df(data, node_df: pd.DataFrame | None) -> pd.DataFrame:
-    if node_df is not None:
-        required_cols = {"row_index", "col_index"}
-        if not required_cols.issubset(node_df.columns):
-            raise ValueError(
-                f"node_df is missing required columns {required_cols}. "
-                f"Found columns: {list(node_df.columns)}"
-            )
-        return node_df.reset_index(drop=True).copy()
-
-    return _build_node_df_from_graph(data)
+    raise AttributeError("Graph data must contain pos to build node_df.")
 
 
 def _get_split_path(config: dict) -> Path:
@@ -114,7 +78,7 @@ def _get_split_path(config: dict) -> Path:
     return Path(f"data/processed/gnn_splits_{split_type}.npz")
 
 
-def _create_or_load_splits(config: dict, node_df: pd.DataFrame) -> dict[str, Any]:
+def _create_or_load_splits(config: dict, node_df: pd.DataFrame) -> dict:
     split_cfg = config["split"]
     split_type = split_cfg["type"].lower()
     split_path = _get_split_path(config)
@@ -147,37 +111,9 @@ def _create_or_load_splits(config: dict, node_df: pd.DataFrame) -> dict[str, Any
     return splits
 
 
-def run_gnn_pipeline(config: dict) -> dict:
-    graph_path = config["data"]["graph_data_path"]
-
-    graph_obj = _load_graph_object(graph_path)
-    data, node_df = _extract_graph_and_node_df(graph_obj)
-    node_df = _resolve_node_df(data, node_df)
-
-    splits = _create_or_load_splits(config, node_df)
-
-    data = attach_masks_to_graph(
-        data,
-        splits["train_idx"],
-        splits["val_idx"],
-        splits["test_idx"],
-    )
-
-    model = build_model(config)
-
-    ckpt_dir = Path(config["outputs"]["checkpoints_dir"])
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = ckpt_dir / f'{config["model"]["name"]}_{config["split"]["type"]}_best.pt'
-
-    trainer = GNNTrainer(
-        model=model,
-        config=config,
-        device=config["training"]["device"],
-    )
-    output = trainer.train(data, checkpoint_path=checkpoint_path)
-
+def _save_metrics(config: dict, output_metrics: dict) -> None:
     metrics_rows = []
-    for split_name, vals in output.metrics.items():
+    for split_name, vals in output_metrics.items():
         row = {
             "model": config["model"]["name"],
             "split_type": config["split"]["type"],
@@ -195,5 +131,81 @@ def run_gnn_pipeline(config: dict) -> dict:
         metrics_df = pd.concat([old_df, metrics_df], ignore_index=True)
 
     metrics_df.to_csv(metrics_path, index=False)
+
+
+def _save_predictions(config: dict, predictions: dict[str, pd.DataFrame]) -> None:
+    if not config["evaluation"]["save_predictions"]:
+        return
+
+    out_dir = Path(config["outputs"]["predictions_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    model_name = config["model"]["name"]
+    split_type = config["split"]["type"]
+
+    for split_name, df in predictions.items():
+        path = out_dir / f"{model_name}_{split_type}_{split_name}_predictions.csv"
+        df.to_csv(path, index=False)
+
+
+def _save_split_diagnostics(config: dict, data) -> None:
+    if not config["evaluation"]["save_split_diagnostics"]:
+        return
+
+    split_stats = make_split_diagnostics(data)
+    split_bins = make_binned_target_distribution(data)
+
+    base_path = Path(config["outputs"]["split_diagnostics_path"])
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+
+    split_stats.to_csv(base_path, index=False)
+
+    bins_path = base_path.with_name(base_path.stem + "_bins.csv")
+    split_bins.to_csv(bins_path, index=False)
+
+
+def run_gnn_pipeline(config: dict) -> dict:
+    graph_path = config["data"]["graph_data_path"]
+    graph_obj = _load_graph_object(graph_path)
+    data = _extract_graph_data(graph_obj)
+
+    if config["topology"]["rebuild_from_pos"]:
+        data = rebuild_spatial_edges_from_pos(
+            data,
+            connectivity=config["topology"]["connectivity"],
+            use_distance_weights=config["topology"]["use_distance_weights"],
+        )
+
+    data = add_recovery_features(data, config)
+
+    config["model"]["in_channels"] = int(data.x.shape[1])
+
+    node_df = _build_node_df_from_graph(data)
+    splits = _create_or_load_splits(config, node_df)
+
+    data = attach_masks_to_graph(
+        data,
+        splits["train_idx"],
+        splits["val_idx"],
+        splits["test_idx"],
+    )
+
+    _save_split_diagnostics(config, data)
+
+    model = build_model(config)
+
+    ckpt_dir = Path(config["outputs"]["checkpoints_dir"])
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = ckpt_dir / f'{config["model"]["name"]}_{config["split"]["type"]}_best.pt'
+
+    trainer = GNNTrainer(
+        model=model,
+        config=config,
+        device=config["training"]["device"],
+    )
+    output = trainer.train(data, checkpoint_path=checkpoint_path)
+
+    _save_metrics(config, output.metrics)
+    _save_predictions(config, output.predictions)
 
     return output.metrics
