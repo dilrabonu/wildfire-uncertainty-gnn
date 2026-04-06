@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 
 from wildfire_gnn.evaluation.calibration import (
@@ -19,6 +20,7 @@ from wildfire_gnn.training.losses import GaussianNLLLossStable
 class TrainerOutput:
     best_val_loss: float
     metrics: dict[str, Any]
+    predictions: dict[str, pd.DataFrame]
 
 
 class GNNTrainer:
@@ -27,14 +29,14 @@ class GNNTrainer:
         self.config = config
         self.device = device
 
-        lr = config["training"]["learning_rate"]
-        wd = config["training"]["weight_decay"]
+        lr = float(config["training"]["learning_rate"])
+        wd = float(config["training"]["weight_decay"])
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=wd)
 
         method = config["uncertainty"]["method"]
-        if method == "gaussian_nll":
+        if config["uncertainty"]["enabled"] and method == "gaussian_nll":
             self.criterion = GaussianNLLLossStable(
-                min_variance=config["uncertainty"]["min_variance"]
+                min_variance=float(config["uncertainty"]["min_variance"])
             )
         else:
             self.criterion = torch.nn.MSELoss()
@@ -48,15 +50,19 @@ class GNNTrainer:
         data = data.to(self.device)
         best_val = float("inf")
         patience = 0
-        max_patience = self.config["training"]["early_stopping_patience"]
-        max_epochs = self.config["training"]["max_epochs"]
-        grad_clip = self.config["training"]["gradient_clip_norm"]
+        max_patience = int(self.config["training"]["early_stopping_patience"])
+        max_epochs = int(self.config["training"]["max_epochs"])
+        grad_clip = float(self.config["training"]["gradient_clip_norm"])
+
+        edge_weight = getattr(data, "edge_weight", None)
+        if edge_weight is not None:
+            edge_weight = edge_weight.to(self.device)
 
         for epoch in range(1, max_epochs + 1):
             self.model.train()
             self.optimizer.zero_grad()
 
-            pred_mean, pred_log_var = self.model(data.x, data.edge_index)
+            pred_mean, pred_log_var = self.model(data.x, data.edge_index, edge_weight=edge_weight)
             train_loss = self._compute_loss(
                 pred_mean[data.train_mask],
                 None if pred_log_var is None else pred_log_var[data.train_mask],
@@ -84,14 +90,18 @@ class GNNTrainer:
                     print("Early stopping triggered.")
                     break
 
-        self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
-        metrics = self.evaluate_full(data)
-        return TrainerOutput(best_val_loss=best_val, metrics=metrics)
+        self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device, weights_only=False))
+        metrics, predictions = self.evaluate_full(data)
+        return TrainerOutput(best_val_loss=best_val, metrics=metrics, predictions=predictions)
 
     @torch.no_grad()
     def evaluate_loss(self, data, mask):
         self.model.eval()
-        pred_mean, pred_log_var = self.model(data.x, data.edge_index)
+        edge_weight = getattr(data, "edge_weight", None)
+        if edge_weight is not None:
+            edge_weight = edge_weight.to(self.device)
+
+        pred_mean, pred_log_var = self.model(data.x, data.edge_index, edge_weight=edge_weight)
         loss = self._compute_loss(
             pred_mean[mask],
             None if pred_log_var is None else pred_log_var[mask],
@@ -102,14 +112,18 @@ class GNNTrainer:
     @torch.no_grad()
     def predict(self, data):
         self.model.eval()
-        pred_mean, pred_log_var = self.model(data.x, data.edge_index)
+        edge_weight = getattr(data, "edge_weight", None)
+        if edge_weight is not None:
+            edge_weight = edge_weight.to(self.device)
 
-        if self.config["uncertainty"]["mc_dropout"]:
+        pred_mean, pred_log_var = self.model(data.x, data.edge_index, edge_weight=edge_weight)
+
+        if self.config["uncertainty"]["enabled"] and self.config["uncertainty"]["mc_dropout"]:
             self.model.train()
             samples = []
-            mc_samples = self.config["uncertainty"]["mc_samples"]
+            mc_samples = int(self.config["uncertainty"]["mc_samples"])
             for _ in range(mc_samples):
-                sample_mean, _ = self.model(data.x, data.edge_index)
+                sample_mean, _ = self.model(data.x, data.edge_index, edge_weight=edge_weight)
                 samples.append(sample_mean.unsqueeze(0))
             stacked = torch.cat(samples, dim=0)
             epistemic_std = stacked.std(dim=0)
@@ -129,20 +143,46 @@ class GNNTrainer:
     def evaluate_full(self, data):
         pred_mean, total_std, aleatoric_std, epistemic_std = self.predict(data)
 
-        results = {}
-        for split_name, mask in {
+        metrics_results = {}
+        prediction_results = {}
+
+        split_map = {
             "train": data.train_mask,
             "val": data.val_mask,
             "test": data.test_mask,
-        }.items():
+        }
+
+        pos_np = data.pos.cpu().numpy() if hasattr(data, "pos") and data.pos is not None else None
+
+        for split_name, mask in split_map.items():
             y_true = data.y[mask].cpu().numpy().reshape(-1)
             y_pred = pred_mean[mask].cpu().numpy().reshape(-1)
             y_std = total_std[mask].cpu().numpy().reshape(-1)
 
             split_metrics = compute_regression_metrics(y_true, y_pred)
-            split_metrics["ece_reg"] = expected_calibration_error_regression(y_true, y_pred, y_std)
-            split_metrics["coverage_95"] = interval_coverage(y_true, y_pred, y_std)
 
-            results[split_name] = split_metrics
+            if self.config["uncertainty"]["enabled"]:
+                split_metrics["ece_reg"] = expected_calibration_error_regression(y_true, y_pred, y_std)
+                split_metrics["coverage_95"] = interval_coverage(y_true, y_pred, y_std)
+            else:
+                split_metrics["ece_reg"] = np.nan
+                split_metrics["coverage_95"] = np.nan
 
-        return results
+            metrics_results[split_name] = split_metrics
+
+            mask_np = mask.cpu().numpy()
+            pred_df = pd.DataFrame({
+                "node_index": np.where(mask_np)[0],
+                "y_true": y_true,
+                "y_pred": y_pred,
+                "abs_error": np.abs(y_true - y_pred),
+            })
+
+            if pos_np is not None:
+                pred_df["row_index"] = pos_np[mask_np, 0].astype(int)
+                pred_df["col_index"] = pos_np[mask_np, 1].astype(int)
+
+            pred_df["predictive_std"] = y_std
+            prediction_results[split_name] = pred_df
+
+        return metrics_results, prediction_results
