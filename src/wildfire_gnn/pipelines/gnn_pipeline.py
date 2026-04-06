@@ -6,7 +6,7 @@ from typing import Any
 import pandas as pd
 import torch
 
-from wildfire_gnn.data.graph_feature import add_recovery_features
+from wildfire_gnn.data.graph_feature_recovery import add_recovery_features
 from wildfire_gnn.data.graph_splitters import (
     attach_masks_to_graph,
     load_splits,
@@ -34,6 +34,9 @@ def build_model(config: dict):
         use_batch_norm=config["model"]["use_batch_norm"],
         residual=config["model"]["residual"],
         uncertainty=config["uncertainty"]["enabled"],
+        output_activation=config["target"]["output_activation"],
+        target_min=config["target"]["min_value"],
+        target_max=config["target"]["max_value"],
     )
 
     if model_name == "gcn":
@@ -69,7 +72,6 @@ def _build_node_df_from_graph(data) -> pd.DataFrame:
             "row_index": pos[:, 0].astype(int),
             "col_index": pos[:, 1].astype(int),
         })
-
     raise AttributeError("Graph data must contain pos to build node_df.")
 
 
@@ -115,8 +117,11 @@ def _save_metrics(config: dict, output_metrics: dict) -> None:
     metrics_rows = []
     for split_name, vals in output_metrics.items():
         row = {
+            "run_name": config["run"]["name"],
             "model": config["model"]["name"],
             "split_type": config["split"]["type"],
+            "connectivity": config["topology"]["connectivity"],
+            "fuel_encoding": config["feature_recovery"]["fuel_encoding"],
             "data_split": split_name,
             **vals,
         }
@@ -140,11 +145,12 @@ def _save_predictions(config: dict, predictions: dict[str, pd.DataFrame]) -> Non
     out_dir = Path(config["outputs"]["predictions_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    run_name = config["run"]["name"]
     model_name = config["model"]["name"]
     split_type = config["split"]["type"]
 
     for split_name, df in predictions.items():
-        path = out_dir / f"{model_name}_{split_type}_{split_name}_predictions.csv"
+        path = out_dir / f"{run_name}_{model_name}_{split_type}_{split_name}_predictions.csv"
         df.to_csv(path, index=False)
 
 
@@ -157,6 +163,9 @@ def _save_split_diagnostics(config: dict, data) -> None:
 
     base_path = Path(config["outputs"]["split_diagnostics_path"])
     base_path.parent.mkdir(parents=True, exist_ok=True)
+
+    split_stats["run_name"] = config["run"]["name"]
+    split_bins["run_name"] = config["run"]["name"]
 
     split_stats.to_csv(base_path, index=False)
 
@@ -177,7 +186,6 @@ def run_gnn_pipeline(config: dict) -> dict:
         )
 
     data = add_recovery_features(data, config)
-
     config["model"]["in_channels"] = int(data.x.shape[1])
 
     node_df = _build_node_df_from_graph(data)
@@ -196,7 +204,7 @@ def run_gnn_pipeline(config: dict) -> dict:
 
     ckpt_dir = Path(config["outputs"]["checkpoints_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = ckpt_dir / f'{config["model"]["name"]}_{config["split"]["type"]}_best.pt'
+    checkpoint_path = ckpt_dir / f'{config["run"]["name"]}_{config["model"]["name"]}_{config["split"]["type"]}_best.pt'
 
     trainer = GNNTrainer(
         model=model,
