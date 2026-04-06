@@ -15,32 +15,43 @@ split:
 
 topology:
   rebuild_from_pos: true
-  connectivity: 8        
+  connectivity: 4          # test 4 first, later 8
   use_distance_weights: true
 
 feature_recovery:
   enabled: true
 
-  
+  # If current x already includes row/col, keep false.
   add_positional_features: false
 
+  # Current likely layout:
+  # [CFL, FSP_Index, Ignition_Prob, Struct_Exp_Index, Fuel_Models, row_norm, col_norm]
   fuel_model_index: 4
-  fuel_encoding: one_hot
+  fuel_encoding: one_hot   # one_hot, grouped, raw
 
   add_degree_feature: true
 
   add_neighbor_mean_features: true
   add_neighbor_std_features: false
 
- 
+  # use original wildfire drivers
   neighbor_summary_feature_indices: [0, 1, 2, 3]
 
+sampling:
+  enabled: true
+  method: train_only_stratified
+  bins: [0.0, 0.01, 0.05, 0.10, 0.25, 1.0]
+  max_train_samples_per_bin: 25000
+
 training_target:
-  transform: none         
+  transform: none
+  min_value: 0.0
+  max_value: 0.25
+  bounded_output: true
 
 model:
-  name: gcn              
-  in_channels: 7          
+  name: gcn
+  in_channels: 7
   hidden_channels: 64
   num_layers: 2
   dropout: 0.1
