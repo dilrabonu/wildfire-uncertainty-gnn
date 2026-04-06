@@ -6,7 +6,7 @@ from typing import Any
 import pandas as pd
 import torch
 
-from wildfire_gnn.data.graph_feature_recovery import add_recovery_features
+from wildfire_gnn.data.graph_feature import add_recovery_features
 from wildfire_gnn.data.graph_splitters import (
     attach_masks_to_graph,
     load_splits,
