@@ -1,85 +1,21 @@
-project:
-  name: wildfire-uncertainty-gnn
-  random_seed: 42
-
-run:
-  name: gnn_recovery_v1
-
-data:
-  graph_data_path: data/processed/graph_data.pt
-
-split:
-  type: spatial
-  train_ratio: 0.70
-  val_ratio: 0.15
-  test_ratio: 0.15
-  n_row_blocks: 8
-  n_col_blocks: 8
-
-topology:
-  rebuild_from_pos: true
-  connectivity: 4          # test 4 first; later compare 8
-  use_distance_weights: true
-
-feature_recovery:
-  enabled: true
-
-  # set false if row/col are already inside x
-  add_positional_features: false
-
-  # original graph x likely:
-  # [CFL, FSP_Index, Ignition_Prob, Struct_Exp_Index, Fuel_Models, row_norm, col_norm]
-  fuel_model_index: 4
-  fuel_encoding: one_hot   # one_hot, raw, grouped
-
-  add_degree_feature: true
-
-  add_neighbor_mean_features: true
-  add_neighbor_std_features: false
-
-  # indices from ORIGINAL x before recovery changes
-  neighbor_summary_feature_indices: [0, 2, 3]
-  # CFL, Ignition_Prob, Struct_Exp_Index
-
-target:
-  min_value: 0.0
-  max_value: 0.25
-  output_activation: bounded_sigmoid   # bounded_sigmoid or linear
+model:
+  name: residual_gat_regressor
+  input_dim: null
+  hidden_dim: 96
+  output_dim: 1
+  num_layers: 3
+  heads: 4
+  dropout: 0.25
+  attn_dropout: 0.15
+  use_batch_norm: true
+  use_graph_norm: true
+  use_residual: true
+  use_jumping_knowledge: true
+  jk_mode: cat
+  edge_dim: 1
 
 uncertainty:
-  enabled: false
-  method: mse
-  mc_dropout: false
-  mc_samples: 0
-  min_variance: 0.000001
-
-model:
-  name: gat               # start with gat now
-  in_channels: 7          # pipeline will overwrite automatically
-  hidden_channels: 64
-  num_layers: 2
-  dropout: 0.1
-  heads: 4
-  use_batch_norm: true
-  residual: true
-
-training:
-  optimizer: adamw
-  learning_rate: 0.0005
-  weight_decay: 0.0001
-  max_epochs: 150
-  early_stopping_patience: 20
-  gradient_clip_norm: 5.0
-  device: cpu
-
-evaluation:
-  save_predictions: true
-  save_split_diagnostics: true
-
-outputs:
-  metrics_path: reports/tables/gnn_metrics.csv
-  split_diagnostics_path: reports/tables/gnn_split_diagnostics.csv
-  predictions_dir: reports/tables
-  figures_dir: reports/figures
-  checkpoints_dir: reports/checkpoints
-  logs_dir: reports/logs
+  enabled: true
+  mc_dropout_samples: 20
+  predict_variance: true
+  min_variance: 1.0e-6
