@@ -13,10 +13,6 @@ def intervene_reduce_feature(
     node_indices: Iterable[int],
     reduction_factor: float,
 ) -> Data:
-    """
-    Example:
-    reduction_factor=0.30 means reduce feature by 30% on selected nodes.
-    """
     data_new = copy.deepcopy(data)
     node_indices = torch.as_tensor(list(node_indices), dtype=torch.long)
     data_new.x[node_indices, feature_index] = data_new.x[node_indices, feature_index] * (1.0 - reduction_factor)
@@ -27,9 +23,6 @@ def intervene_firebreak(
     data: Data,
     blocked_node_indices: Iterable[int],
 ) -> Data:
-    """
-    Removes edges touching selected nodes to simulate a hard firebreak barrier.
-    """
     data_new = copy.deepcopy(data)
     blocked = set(int(i) for i in blocked_node_indices)
 
