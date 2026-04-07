@@ -19,3 +19,27 @@ uncertainty:
   mc_dropout_samples: 20
   predict_variance: true
   min_variance: 1.0e-6
+
+training:
+  device: cpu
+  optimizer: adamw
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  max_epochs: 80
+  early_stopping_patience: 10
+  gradient_clip_norm: 5.0
+
+loss:
+  name: hybrid_gaussian_nll
+  huber_delta: 0.02
+  tail_weight_power: 1.5
+  max_tail_weight: 6.0
+
+target:
+  transform: sqrt_scaled
+  target_max: 0.25
+
+evaluation:
+  save_predictions: true
+  compute_tail_metrics: true
+  high_risk_threshold: 0.10
