@@ -13,29 +13,27 @@ def interval_coverage(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray, z: 
 
 
 def regression_ece(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray, n_bins: int = 10) -> float:
-    """
-    Simple regression ECE based on normalized residual confidence.
-    Lower is better.
-    """
     std = np.clip(std, 1e-8, None)
     z = np.abs(y_true - mean) / std
     confidence = np.exp(-z)
 
     bins = np.linspace(0.0, 1.0, n_bins + 1)
     ece = 0.0
+
     for i in range(n_bins):
         mask = (confidence >= bins[i]) & (confidence < bins[i + 1])
         if mask.sum() == 0:
             continue
         avg_conf = float(confidence[mask].mean())
         avg_acc = float((z[mask] <= 1.0).mean())
-        ece += (mask.mean()) * abs(avg_conf - avg_acc)
+        ece += mask.mean() * abs(avg_conf - avg_acc)
+
     return float(ece)
 
 
-def calibration_summary(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray) -> Dict[str, float]:
+def calibration_summary(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray, n_bins: int = 10) -> Dict[str, float]:
     return {
-        "coverage_95": interval_coverage(y_true, mean, std, z=1.96),
         "coverage_68": interval_coverage(y_true, mean, std, z=1.0),
-        "ece_reg": regression_ece(y_true, mean, std, n_bins=10),
+        "coverage_95": interval_coverage(y_true, mean, std, z=1.96),
+        "ece_reg": regression_ece(y_true, mean, std, n_bins=n_bins),
     }

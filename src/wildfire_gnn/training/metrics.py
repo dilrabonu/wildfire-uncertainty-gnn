@@ -32,7 +32,9 @@ def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, floa
 
 
 def tail_rmse(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.10) -> float:
-    mask = y_true.reshape(-1) >= threshold
+    y_true = y_true.reshape(-1)
+    y_pred = y_pred.reshape(-1)
+    mask = y_true >= threshold
     if mask.sum() == 0:
         return np.nan
-    return float(np.sqrt(np.mean((y_true.reshape(-1)[mask] - y_pred.reshape(-1)[mask]) ** 2))))
+    return float(np.sqrt(np.mean((y_true[mask] - y_pred[mask]) ** 2)))
