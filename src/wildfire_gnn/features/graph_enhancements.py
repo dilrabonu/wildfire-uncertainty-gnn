@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Tuple
 
 import torch
 from torch import Tensor
@@ -31,31 +31,13 @@ class TargetTransform:
         raise ValueError(f"Unsupported target transform: {self.name}")
 
 
-def build_edge_weights(data: Data, sigma: float = 0.15) -> Tensor:
-    """
-    Build scalar edge weights from normalized node positions.
-    Assumes data.pos is in [0, 1] range.
-    """
-    src, dst = data.edge_index
-    pos_src = data.pos[src]
-    pos_dst = data.pos[dst]
-    dist = torch.norm(pos_src - pos_dst, dim=1)
-    weights = torch.exp(-(dist ** 2) / max(sigma ** 2, 1e-8))
-    return weights.unsqueeze(-1)
-
-
 def add_degree_feature(data: Data) -> Data:
     deg = degree(data.edge_index[0], num_nodes=data.num_nodes, dtype=data.x.dtype)
-    deg = deg.unsqueeze(-1)
-    data.x = torch.cat([data.x, deg], dim=1)
+    data.x = torch.cat([data.x, deg.unsqueeze(-1)], dim=1)
     return data
 
 
 def add_neighborhood_statistics(data: Data) -> Data:
-    """
-    Adds 1-hop neighborhood mean and std for each node feature.
-    This gives local context closer to patch-based CNNs.
-    """
     x = data.x
     src, dst = data.edge_index
     num_nodes, num_feats = x.shape
@@ -78,22 +60,31 @@ def add_neighborhood_statistics(data: Data) -> Data:
     return data
 
 
+def build_edge_weights(data: Data, sigma: float = 0.15) -> Tensor:
+    if not hasattr(data, "pos") or data.pos is None:
+        return torch.ones((data.edge_index.shape[1], 1), dtype=data.x.dtype)
+
+    src, dst = data.edge_index
+    pos_src = data.pos[src]
+    pos_dst = data.pos[dst]
+    dist = torch.norm(pos_src - pos_dst, dim=1)
+    weights = torch.exp(-(dist ** 2) / max(sigma ** 2, 1e-8))
+    return weights.unsqueeze(-1)
+
+
 def prepare_graph_for_gnn(
     data: Data,
     transform_name: str = "sqrt_scaled",
     target_max: float = 0.25,
 ) -> Tuple[Data, TargetTransform]:
-    """
-    Main enhancement function before training.
-    """
     transformer = TargetTransform(name=transform_name, target_max=target_max)
-
-    data = add_degree_feature(data)
-    data = add_neighborhood_statistics(data)
-    data.edge_attr = build_edge_weights(data)
 
     if data.y.dim() == 1:
         data.y = data.y.unsqueeze(-1)
 
+    data = add_degree_feature(data)
+    data = add_neighborhood_statistics(data)
+    data.edge_attr = build_edge_weights(data)
     data.y_transformed = transformer.forward(data.y)
+
     return data, transformer

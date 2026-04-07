@@ -1,3 +1,27 @@
+project:
+  name: wildfire-uncertainty-gnn
+  random_seed: 42
+
+paths:
+  graph_data_path: data/processed/graph_data.pt
+  split_path: data/processed/baseline_splits_spatial.npz
+
+outputs:
+  checkpoints_dir: reports/checkpoints
+  tables_dir: reports/tables
+  figures_dir: reports/figures
+  logs_dir: reports/logs
+
+  checkpoint_name: uncertainty_gat_best.pt
+  metrics_filename: gnn_metrics.csv
+  tail_metrics_filename: gnn_tail_metrics.csv
+  predictions_filename: gnn_test_predictions.csv
+  val_predictions_filename: gnn_val_predictions.csv
+  uncertainty_predictions_filename: gnn_uncertainty_predictions.csv
+  calibration_metrics_filename: gnn_calibration_metrics.csv
+  intervention_metrics_filename: intervention_metrics.csv
+  intervention_predictions_filename: gnn_intervention_predictions.csv
+
 model:
   name: residual_gat_regressor
   input_dim: null
@@ -7,7 +31,6 @@ model:
   heads: 4
   dropout: 0.25
   attn_dropout: 0.15
-  use_batch_norm: true
   use_graph_norm: true
   use_residual: true
   use_jumping_knowledge: true
@@ -34,6 +57,7 @@ loss:
   huber_delta: 0.02
   tail_weight_power: 1.5
   max_tail_weight: 6.0
+  hybrid_alpha: 0.8
 
 target:
   transform: sqrt_scaled
@@ -43,3 +67,11 @@ evaluation:
   save_predictions: true
   compute_tail_metrics: true
   high_risk_threshold: 0.10
+  calibration_bins: 10
+  coverage_levels: [0.68, 0.95]
+
+intervention:
+  enabled: true
+  feature_index_for_fuel_like_intervention: 0
+  reduction_factor: 0.30
+  max_nodes_to_modify: 5000
