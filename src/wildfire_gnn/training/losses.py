@@ -6,10 +6,6 @@ from torch import Tensor
 
 
 def compute_tail_weights(y_true: Tensor, power: float = 1.5, max_weight: float = 6.0) -> Tensor:
-    """
-    Higher target values receive larger weight.
-    Assumes transformed target is in [0, 1] approximately.
-    """
     y = y_true.detach().clamp(min=0.0)
     weights = 1.0 + (y ** power) * (max_weight - 1.0)
     return weights
