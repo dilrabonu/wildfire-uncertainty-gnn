@@ -48,7 +48,11 @@ def add_neighborhood_statistics(data: Data) -> Data:
 
     neigh_sum.index_add_(0, dst, x[src])
     neigh_sq_sum.index_add_(0, dst, x[src] ** 2)
-    counts.index_add_(0, dst, torch.ones((src.shape[0], 1), dtype=x.dtype, device=x.device))
+    counts.index_add_(
+        0,
+        dst,
+        torch.ones((src.shape[0], 1), dtype=x.dtype, device=x.device),
+    )
 
     counts = counts.clamp_min(1.0)
     neigh_mean = neigh_sum / counts
@@ -62,14 +66,22 @@ def add_neighborhood_statistics(data: Data) -> Data:
 
 def build_edge_weights(data: Data, sigma: float = 0.15) -> Tensor:
     if not hasattr(data, "pos") or data.pos is None:
-        return torch.ones((data.edge_index.shape[1], 1), dtype=data.x.dtype)
+        return torch.ones(
+            (data.edge_index.shape[1], 1),
+            dtype=data.x.dtype,
+            device=data.x.device,
+        )
 
     src, dst = data.edge_index
-    pos_src = data.pos[src]
-    pos_dst = data.pos[dst]
+
+    pos = data.pos.float()
+    pos_src = pos[src]
+    pos_dst = pos[dst]
+
     dist = torch.norm(pos_src - pos_dst, dim=1)
     weights = torch.exp(-(dist ** 2) / max(sigma ** 2, 1e-8))
-    return weights.unsqueeze(-1)
+
+    return weights.unsqueeze(-1).to(data.x.dtype)
 
 
 def prepare_graph_for_gnn(
@@ -79,8 +91,14 @@ def prepare_graph_for_gnn(
 ) -> Tuple[Data, TargetTransform]:
     transformer = TargetTransform(name=transform_name, target_max=target_max)
 
+    data.x = data.x.float()
+    data.y = data.y.float()
+
     if data.y.dim() == 1:
         data.y = data.y.unsqueeze(-1)
+
+    if hasattr(data, "pos") and data.pos is not None:
+        data.pos = data.pos.float()
 
     data = add_degree_feature(data)
     data = add_neighborhood_statistics(data)

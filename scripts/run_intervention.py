@@ -1,4 +1,6 @@
 from __future__ import annotations
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import os
 import yaml
@@ -20,7 +22,7 @@ def load_yaml(path: str) -> dict:
 def main() -> None:
     cfg = load_yaml("configs/gnn_config.yaml")
 
-    data = torch.load(cfg["paths"]["graph_data_path"], map_location="cpu")
+    data = torch.load(cfg["paths"]["graph_data_path"], map_location="cpu", weights_only=False,)
     data, transformer = prepare_graph_for_gnn(
         data,
         transform_name=cfg["target"]["transform"],

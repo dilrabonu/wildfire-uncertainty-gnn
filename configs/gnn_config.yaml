@@ -25,21 +25,21 @@ outputs:
 model:
   name: residual_gat_regressor
   input_dim: null
-  hidden_dim: 96
+  hidden_dim: 32
   output_dim: 1
-  num_layers: 3
-  heads: 4
-  dropout: 0.25
-  attn_dropout: 0.15
+  num_layers: 2
+  heads: 2
+  dropout: 0.2
+  attn_dropout: 0.1
   use_graph_norm: true
   use_residual: true
-  use_jumping_knowledge: true
+  use_jumping_knowledge: false
   jk_mode: cat
   edge_dim: 1
 
 uncertainty:
   enabled: true
-  mc_dropout_samples: 20
+  mc_dropout_samples: 5
   predict_variance: true
   min_variance: 1.0e-6
 
@@ -48,15 +48,15 @@ training:
   optimizer: adamw
   learning_rate: 0.0005
   weight_decay: 0.0001
-  max_epochs: 80
-  early_stopping_patience: 10
+  max_epochs: 8
+  early_stopping_patience: 3
   gradient_clip_norm: 5.0
 
 loss:
   name: hybrid_gaussian_nll
   huber_delta: 0.02
   tail_weight_power: 1.5
-  max_tail_weight: 6.0
+  max_tail_weight: 4.0
   hybrid_alpha: 0.8
 
 target:
@@ -74,4 +74,4 @@ intervention:
   enabled: true
   feature_index_for_fuel_like_intervention: 0
   reduction_factor: 0.30
-  max_nodes_to_modify: 5000
+  max_nodes_to_modify: 1000

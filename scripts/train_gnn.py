@@ -1,4 +1,6 @@
 from __future__ import annotations
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import os
 import yaml
@@ -24,7 +26,7 @@ def main() -> None:
     ensure_dir(cfg["outputs"]["tables_dir"])
     ensure_dir(cfg["outputs"]["figures_dir"])
 
-    data = torch.load(cfg["paths"]["graph_data_path"], map_location="cpu")
+    data = torch.load(cfg["paths"]["graph_data_path"], map_location="cpu", weights_only=False,)
     result = train_uncertainty_gnn(data, cfg)
 
     checkpoint_path = os.path.join(
