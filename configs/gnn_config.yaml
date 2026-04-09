@@ -4,43 +4,76 @@ project:
 
 paths:
   graph_data_path: data/processed/graph_data.pt
-  split_path: data/processed/baseline_splits_spatial.npz
+  baseline_dataset_path: data/processed/baseline_dataset.csv
 
-outputs:
-  checkpoints_dir: reports/checkpoints
-  tables_dir: reports/tables
+  outputs_root: reports
+  metrics_table_path: reports/tables/gnn_metrics.csv
+  bin_metrics_table_path: reports/tables/gnn_bin_metrics.csv
+  calibration_metrics_table_path: reports/tables/gnn_calibration_metrics.csv
+  predictions_table_path: reports/tables/gnn_spatial_test_predictions.csv
+  ablation_table_path: reports/tables/gnn_feature_ablation.csv
+
   figures_dir: reports/figures
+  checkpoints_dir: reports/checkpoints
   logs_dir: reports/logs
 
-  checkpoint_name: uncertainty_gat_best.pt
-  metrics_filename: gnn_metrics.csv
-  tail_metrics_filename: gnn_tail_metrics.csv
-  predictions_filename: gnn_test_predictions.csv
-  val_predictions_filename: gnn_val_predictions.csv
-  uncertainty_predictions_filename: gnn_uncertainty_predictions.csv
-  calibration_metrics_filename: gnn_calibration_metrics.csv
-  intervention_metrics_filename: intervention_metrics.csv
-  intervention_predictions_filename: gnn_intervention_predictions.csv
+data:
+  split_type: spatial   
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+  target_name: y
+  use_edge_weight: false
+  num_node_features_raw: 7
+
+feature_engineering:
+  enable: true
+
+  continuous_feature_names:
+    - CFL.img
+    - FSP_Index.img
+    - Ignition_Prob.img
+    - Struct_Exp_Index.img
+    - row_norm
+    - col_norm
+
+  categorical_feature_names:
+    - Fuel_Models.img
+
+  transform_continuous: true
+  transform_method: sqrt_scaled   
+  clip_quantile_low: 0.001
+  clip_quantile_high: 0.999
+
+  encode_fuel: onehot             
+  fuel_embedding_dim: 8
+
+  add_neighborhood_features: true
+  neighborhood_aggs:
+    - mean
+    - std
+
+  keep_coordinates: true
 
 model:
-  name: residual_gat_regressor
-  input_dim: null
-  hidden_dim: 32
-  output_dim: 1
-  num_layers: 2
-  heads: 2
-  dropout: 0.2
-  attn_dropout: 0.1
-  use_graph_norm: true
-  use_residual: true
-  use_jumping_knowledge: false
-  jk_mode: cat
-  edge_dim: 1
+  stage1_name: graphsage
+  stage2_name: residual_gat
 
-uncertainty:
-  enabled: true
-  mc_dropout_samples: 5
-  predict_variance: true
+  hidden_dim: 96
+  num_layers: 3
+  dropout: 0.25
+  use_batch_norm: true
+  use_residual: true
+
+  sage_aggr: mean
+
+  gat_heads: 4
+  gat_dropout: 0.15
+  use_jumping_knowledge: true
+  jk_mode: cat
+
+  predict_variance: false
   min_variance: 1.0e-6
 
 training:
@@ -48,30 +81,52 @@ training:
   optimizer: adamw
   learning_rate: 0.0005
   weight_decay: 0.0001
-  max_epochs: 8
-  early_stopping_patience: 3
+  max_epochs: 80
+  early_stopping_patience: 10
   gradient_clip_norm: 5.0
 
-loss:
-  name: hybrid_gaussian_nll
+  loss_name: weighted_huber      
   huber_delta: 0.02
-  tail_weight_power: 1.5
-  max_tail_weight: 4.0
-  hybrid_alpha: 0.8
 
-target:
-  transform: sqrt_scaled
-  target_max: 0.25
+  target_reweighting: true
+  target_bin_edges:
+    - 0.0
+    - 0.01
+    - 0.05
+    - 0.10
+    - 0.25
+  target_bin_weights:
+    - 1.0
+    - 2.0
+    - 4.0
+    - 6.0
+
+uncertainty:
+  enable_mc_dropout: false
+  mc_samples: 20
+  temperature_scaling: false
 
 evaluation:
   save_predictions: true
-  compute_tail_metrics: true
-  high_risk_threshold: 0.10
-  calibration_bins: 10
-  coverage_levels: [0.68, 0.95]
+  save_figures: true
 
-intervention:
-  enabled: true
-  feature_index_for_fuel_like_intervention: 0
-  reduction_factor: 0.30
-  max_nodes_to_modify: 1000
+  calibration_num_bins: 10
+  high_risk_thresholds:
+    - 0.01
+    - 0.05
+    - 0.10
+
+  regression_bins:
+    - [0.0, 0.01]
+    - [0.01, 0.05]
+    - [0.05, 0.10]
+    - [0.10, 0.25]
+
+ablation:
+  run_feature_ablation: true
+  feature_sets:
+    - all_features
+    - no_coordinates
+    - no_fuel
+    - coordinates_only
+    - fuel_and_coordinates
