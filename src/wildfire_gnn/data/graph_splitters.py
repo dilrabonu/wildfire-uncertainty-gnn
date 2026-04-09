@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
+from torch_geometric.data import Data
 
 
 def make_random_node_split(
@@ -134,11 +135,11 @@ def load_splits(path: str | Path) -> dict[str, np.ndarray]:
 
 
 def attach_masks_to_graph(
-    data: torch.Tensor,
+    data: Data,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     test_idx: np.ndarray,
-):
+) -> Data:
     """Attach boolean train/val/test masks to a PyG Data object."""
     n = data.num_nodes
     data.train_mask = torch.zeros(n, dtype=torch.bool)
@@ -149,3 +150,24 @@ def attach_masks_to_graph(
     data.val_mask[torch.as_tensor(val_idx, dtype=torch.long)] = True
     data.test_mask[torch.as_tensor(test_idx, dtype=torch.long)] = True
     return data
+
+
+def attach_masks_from_split_file(data: Data, split_path: str | Path) -> Data:
+    """Load split arrays from NPZ and attach boolean masks to graph."""
+    splits = load_splits(split_path)
+    return attach_masks_to_graph(
+        data=data,
+        train_idx=splits["train_idx"],
+        val_idx=splits["val_idx"],
+        test_idx=splits["test_idx"],
+    )
+
+
+def print_mask_summary(data: Data) -> None:
+    """Print train/val/test mask summary."""
+    print("Mask summary:")
+    print("train:", int(data.train_mask.sum()))
+    print("val  :", int(data.val_mask.sum()))
+    print("test :", int(data.test_mask.sum()))
+    print("total:", int(data.train_mask.sum() + data.val_mask.sum() + data.test_mask.sum()))
+    print("nodes:", int(data.num_nodes))
