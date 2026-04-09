@@ -2,48 +2,46 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from torch import Tensor
-
-
-def compute_tail_weights(y_true: Tensor, power: float = 1.5, max_weight: float = 6.0) -> Tensor:
-    y = y_true.detach().clamp(min=0.0)
-    weights = 1.0 + (y ** power) * (max_weight - 1.0)
-    return weights
 
 
 def weighted_huber_loss(
-    y_pred: Tensor,
-    y_true: Tensor,
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    weights: torch.Tensor,
     delta: float = 0.02,
-    power: float = 1.5,
-    max_weight: float = 6.0,
-) -> Tensor:
-    weights = compute_tail_weights(y_true, power=power, max_weight=max_weight)
-    loss = F.huber_loss(y_pred, y_true, delta=delta, reduction="none")
-    return (weights * loss).mean()
+) -> torch.Tensor:
+    loss = F.huber_loss(pred, target, delta=delta, reduction="none")
+    return (loss * weights).mean()
 
 
 def gaussian_nll_loss(
-    mean: Tensor,
-    var: Tensor,
-    y_true: Tensor,
-    power: float = 1.5,
-    max_weight: float = 6.0,
-) -> Tensor:
-    weights = compute_tail_weights(y_true, power=power, max_weight=max_weight)
-    nll = 0.5 * (torch.log(var) + ((y_true - mean) ** 2) / var)
-    return (weights * nll).mean()
+    mean: torch.Tensor,
+    var: torch.Tensor,
+    target: torch.Tensor,
+) -> torch.Tensor:
+    return F.gaussian_nll_loss(mean, target, var, full=True)
 
 
-def hybrid_gaussian_nll(
-    mean: Tensor,
-    var: Tensor,
-    y_true: Tensor,
-    delta: float = 0.02,
-    power: float = 1.5,
-    max_weight: float = 6.0,
-    alpha: float = 0.8,
-) -> Tensor:
-    nll = gaussian_nll_loss(mean, var, y_true, power=power, max_weight=max_weight)
-    huber = weighted_huber_loss(mean, y_true, delta=delta, power=power, max_weight=max_weight)
-    return alpha * nll + (1.0 - alpha) * huber
+def build_target_weights(
+    target: torch.Tensor,
+    bin_edges: list[float],
+    bin_weights: list[float],
+) -> torch.Tensor:
+    """
+    target shape: [N, 1]
+    """
+    assert len(bin_edges) >= 2
+    assert len(bin_weights) == len(bin_edges) - 1
+
+    weights = torch.ones_like(target)
+    for i in range(len(bin_weights)):
+        low = bin_edges[i]
+        high = bin_edges[i + 1]
+        mask = (target >= low) & (target < high)
+        weights[mask] = bin_weights[i]
+
+    last_mask = target >= bin_edges[-1]
+    if last_mask.any():
+        weights[last_mask] = bin_weights[-1]
+
+    return weights
