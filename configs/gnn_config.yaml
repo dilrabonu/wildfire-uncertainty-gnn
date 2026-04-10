@@ -5,6 +5,8 @@ project:
 paths:
   graph_data_path: data/processed/graph_data.pt
   baseline_dataset_path: data/processed/baseline_dataset.csv
+  random_split_path: data/processed/baseline_splits_random.npz
+  spatial_split_path: data/processed/baseline_splits_spatial.npz
 
   outputs_root: reports
   metrics_table_path: reports/tables/gnn_metrics.csv
