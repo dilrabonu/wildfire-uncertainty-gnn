@@ -15,6 +15,8 @@ from wildfire_gnn.training.losses import (
     gaussian_nll_loss,
     weighted_huber_loss,
 )
+
+from wildfire_gnn.training.losses import weighted_mse_loss
 from wildfire_gnn.training.metrics import (
     regression_metrics,
     binwise_regression_metrics,
