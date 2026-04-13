@@ -13,6 +13,15 @@ def weighted_huber_loss(
     loss = F.huber_loss(pred, target, delta=delta, reduction="none")
     return (loss * weights).mean()
 
+def weighted_mse_loss(pred, target):
+    """
+    Weighted MSE:
+    Gives higher importance to high burn probability
+    """
+    weights = 1.0 + 10.0 * target  
+    loss = weights * (pred - target) ** 2
+    return loss.mean()
+
 
 def gaussian_nll_loss(
     mean: torch.Tensor,
