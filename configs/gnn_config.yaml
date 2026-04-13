@@ -29,11 +29,30 @@ data:
   use_edge_weight: false
   num_node_features_raw: 7
 
-  target_transform: log1p        # none | log1p
+  target_transform: log1p
   target_max_raw: 0.25
 
 feature_engineering:
   enable: true
+
+  continuous_feature_names:
+    - CFL.img
+    - FSP_Index.img
+    - Ignition_Prob.img
+    - Struct_Exp_Index.img
+    - row_norm
+    - col_norm
+
+  categorical_feature_names:
+    - Fuel_Models.img
+
+  transform_continuous: true
+  transform_method: sqrt_scaled
+  clip_quantile_low: 0.001
+  clip_quantile_high: 0.999
+
+  encode_fuel: onehot
+  fuel_embedding_dim: 8
 
   add_degree_feature: true
   add_neighborhood_features: true
@@ -42,6 +61,8 @@ feature_engineering:
     - std
     - max
     - residual
+
+  keep_coordinates: true
 
 model:
   stage1_name: graphsage
@@ -63,7 +84,7 @@ model:
   predict_variance: false
   min_variance: 1.0e-6
 
-  output_activation: bounded_sigmoid   # none | bounded_sigmoid
+  output_activation: bounded_sigmoid
 
 training:
   device: cpu
@@ -74,7 +95,7 @@ training:
   early_stopping_patience: 10
   gradient_clip_norm: 5.0
 
-  loss_name: weighted_huber            # mse | weighted_mse | weighted_huber | gaussian_nll
+  loss_name: weighted_huber
   huber_delta: 0.02
 
   target_reweighting: true
