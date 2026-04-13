@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -14,13 +14,12 @@ from wildfire_gnn.training.losses import (
     build_target_weights,
     gaussian_nll_loss,
     weighted_huber_loss,
+    weighted_mse_loss,
 )
-
-from wildfire_gnn.training.losses import weighted_mse_loss
 from wildfire_gnn.training.metrics import (
-    regression_metrics,
     binwise_regression_metrics,
     regression_ece,
+    regression_metrics,
     reliability_table,
 )
 
@@ -45,9 +44,25 @@ class GNNPipeline:
         for p in [self.figures_dir, self.tables_dir, self.checkpoints_dir, self.logs_dir]:
             p.mkdir(parents=True, exist_ok=True)
 
+    def _target_output_max(self) -> float:
+        target_max_raw = float(self.config["data"]["target_max_raw"])
+        transform = self.config["data"].get("target_transform", "none")
+
+        if transform == "log1p":
+            return float(np.log1p(target_max_raw))
+        return target_max_raw
+
+    def _inverse_target_transform(self, arr: np.ndarray) -> np.ndarray:
+        transform = self.config["data"].get("target_transform", "none")
+        if transform == "log1p":
+            return np.expm1(arr)
+        return arr
+
     def build_model(self, in_dim: int, stage: str = "stage1"):
         model_cfg = self.config["model"]
-        predict_variance = self.config["model"].get("predict_variance", False)
+        predict_variance = model_cfg.get("predict_variance", False)
+        output_activation = model_cfg.get("output_activation", "none")
+        output_max = self._target_output_max() if output_activation == "bounded_sigmoid" else None
 
         if stage == "stage1":
             name = model_cfg["stage1_name"]
@@ -62,6 +77,8 @@ class GNNPipeline:
                 dropout=model_cfg["dropout"],
                 predict_variance=predict_variance,
                 min_variance=model_cfg.get("min_variance", 1e-6),
+                output_activation=output_activation,
+                output_max=output_max,
             )
         elif name == "residual_gat":
             model = ResidualGATRegressor(
@@ -74,13 +91,15 @@ class GNNPipeline:
                 use_jk=model_cfg.get("use_jumping_knowledge", True),
                 predict_variance=predict_variance,
                 min_variance=model_cfg.get("min_variance", 1e-6),
+                output_activation=output_activation,
+                output_max=output_max,
             )
         else:
             raise ValueError(f"Unsupported model name: {name}")
 
         return model.to(self.device)
 
-    def _compute_loss(self, out, y, mask):
+    def _compute_loss(self, out, y, y_raw, mask):
         train_cfg = self.config["training"]
         loss_name = train_cfg["loss_name"]
 
@@ -91,18 +110,27 @@ class GNNPipeline:
 
         y_mask = y[mask]
         mean_mask = mean[mask]
+        y_raw_mask = y_raw[mask] if y_raw is not None else y_mask
+
+        weights = build_target_weights(
+            target_raw=y_raw_mask,
+            bin_edges=train_cfg["target_bin_edges"],
+            bin_weights=train_cfg["target_bin_weights"],
+        ).to(y.device)
 
         if loss_name == "weighted_huber":
-            weights = build_target_weights(
-                target=y_mask,
-                bin_edges=train_cfg["target_bin_edges"],
-                bin_weights=train_cfg["target_bin_weights"],
-            ).to(y.device)
             return weighted_huber_loss(
                 pred=mean_mask,
                 target=y_mask,
                 weights=weights,
                 delta=train_cfg["huber_delta"],
+            )
+
+        if loss_name == "weighted_mse":
+            return weighted_mse_loss(
+                pred=mean_mask,
+                target=y_mask,
+                weights=weights,
             )
 
         if loss_name == "gaussian_nll":
@@ -113,7 +141,17 @@ class GNNPipeline:
         return torch.nn.functional.mse_loss(mean_mask, y_mask)
 
     def train(self, data: Data, stage: str = "stage1") -> TrainOutputs:
+        required_masks = ["train_mask", "val_mask", "test_mask"]
+        for mask_name in required_masks:
+            if not hasattr(data, mask_name):
+                raise ValueError(
+                    f"Data object is missing '{mask_name}'. "
+                    "Attach train/val/test masks before calling train()."
+                )
+
         data = data.to(self.device)
+        y_raw = data.y_raw if hasattr(data, "y_raw") else None
+
         model = self.build_model(in_dim=data.x.shape[1], stage=stage)
 
         train_cfg = self.config["training"]
@@ -133,7 +171,7 @@ class GNNPipeline:
             optimizer.zero_grad()
 
             out = model(data.x, data.edge_index)
-            train_loss = self._compute_loss(out, data.y, data.train_mask)
+            train_loss = self._compute_loss(out, data.y, y_raw, data.train_mask)
 
             train_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg["gradient_clip_norm"])
@@ -142,7 +180,7 @@ class GNNPipeline:
             model.eval()
             with torch.no_grad():
                 out_val = model(data.x, data.edge_index)
-                val_loss = self._compute_loss(out_val, data.y, data.val_mask)
+                val_loss = self._compute_loss(out_val, data.y, y_raw, data.val_mask)
 
             history_rows.append(
                 {
@@ -174,7 +212,7 @@ class GNNPipeline:
     def predict(self, data: Data, checkpoint_path: str, stage: str = "stage1"):
         data = data.to(self.device)
         model = self.build_model(in_dim=data.x.shape[1], stage=stage)
-        model.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
+        model.load_state_dict(torch.load(checkpoint_path, map_location=self.device, weights_only=False))
         model.eval()
 
         with torch.no_grad():
@@ -196,10 +234,11 @@ class GNNPipeline:
         preds, unc = self.predict(data, checkpoint_path, stage=stage)
 
         y_true = data.y.detach().cpu().numpy()
+        y_true_raw = data.y_raw.detach().cpu().numpy() if hasattr(data, "y_raw") else self._inverse_target_transform(y_true)
         test_mask = data.test_mask.detach().cpu().numpy().astype(bool)
 
-        y_test = y_true[test_mask]
-        pred_test = preds[test_mask]
+        y_test = y_true_raw[test_mask]
+        pred_test = self._inverse_target_transform(preds[test_mask])
         unc_test = unc[test_mask]
 
         overall = regression_metrics(y_test, pred_test)
