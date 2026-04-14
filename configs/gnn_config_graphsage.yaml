@@ -4,31 +4,25 @@ project:
 
 paths:
   graph_data_path: data/processed/graph_data.pt
-  baseline_dataset_path: data/processed/baseline_dataset.csv
-  random_split_path: data/processed/baseline_splits_random.npz
   spatial_split_path: data/processed/baseline_splits_spatial.npz
 
-  outputs_root: reports
-  metrics_table_path: reports/tables/gnn_metrics.csv
-  bin_metrics_table_path: reports/tables/gnn_bin_metrics.csv
-  calibration_metrics_table_path: reports/tables/gnn_calibration_metrics.csv
-  predictions_table_path: reports/tables/gnn_spatial_test_predictions.csv
-  ablation_table_path: reports/tables/gnn_feature_ablation.csv
+  metrics_table_path: reports/tables/graphsage_metrics.csv
+  bin_metrics_table_path: reports/tables/graphsage_bin_metrics.csv
+  calibration_metrics_table_path: reports/tables/graphsage_calibration_metrics.csv
+  predictions_table_path: reports/tables/graphsage_spatial_test_predictions.csv
+  ablation_table_path: reports/tables/graphsage_feature_ablation.csv
 
   figures_dir: reports/figures
   checkpoints_dir: reports/checkpoints
   logs_dir: reports/logs
 
+  checkpoint_name: graphsage_stage1_spatial_best.pt
+  training_history_name: graphsage_training_history.csv
+  reliability_table_name: graphsage_reliability_table.csv
+
 data:
   split_type: spatial
-  train_ratio: 0.70
-  val_ratio: 0.15
-  test_ratio: 0.15
-
   target_name: y
-  use_edge_weight: false
-  num_node_features_raw: 7
-
   target_transform: log1p
   target_max_raw: 0.25
 
@@ -42,29 +36,19 @@ data:
     - col_norm
 
 feature_engineering:
-  enable: true
-
   add_degree_feature: true
-
   add_neighborhood_features: true
   neighborhood_aggs:
     - mean
     - std
     - max
-    - min
     - residual
-    - contrast
-
-  add_two_hop_features: true
+  add_two_hop_features: false
   two_hop_aggs:
     - mean
     - std
-
-  add_feature_interactions: true
-  interaction_pairs:
-    - [CFL.img, Ignition_Prob.img]
-    - [Ignition_Prob.img, Fuel_Models.img]
-    - [Struct_Exp_Index.img, Fuel_Models.img]
+  add_feature_interactions: false
+  interaction_pairs: []
 
 model:
   stage1_name: graphsage
@@ -73,15 +57,9 @@ model:
   hidden_dim: 128
   num_layers: 3
   dropout: 0.30
-  use_batch_norm: true
-  use_residual: true
-
-  sage_aggr: mean
-
   gat_heads: 4
   gat_dropout: 0.20
   use_jumping_knowledge: true
-  jk_mode: cat
 
   output_activation: bounded_sigmoid
   predict_variance: false
@@ -103,7 +81,6 @@ training:
   loss_name: weighted_huber
   huber_delta: 0.02
 
-  target_reweighting: true
   target_bin_edges:
     - 0.0
     - 0.01
@@ -128,30 +105,9 @@ uncertainty:
   temperature_scaling: false
 
 evaluation:
-  save_predictions: true
-  save_figures: true
-
   calibration_num_bins: 10
-  high_risk_thresholds:
-    - 0.01
-    - 0.05
-    - 0.10
-
   regression_bins:
     - [0.0, 0.01]
     - [0.01, 0.05]
     - [0.05, 0.10]
     - [0.10, 0.25]
-
-ablation:
-  run_feature_ablation: true
-  feature_sets:
-    - all_features
-    - raw_only
-    - raw_plus_degree
-    - raw_plus_mean_std
-    - full_engineered
-    - no_coordinates
-    - no_fuel
-    - coordinates_only
-    - fuel_and_coordinates
