@@ -1,0 +1,118 @@
+project:
+  name: wildfire-uncertainty-gnn
+  random_seed: 42
+
+paths:
+  graph_data_path: data/processed/graph_data.pt
+  spatial_split_path: data/processed/baseline_splits_spatial.npz
+
+  metrics_table_path: reports/tables/gat_uncertainty_metrics.csv
+  bin_metrics_table_path: reports/tables/gat_uncertainty_bin_metrics.csv
+  calibration_metrics_table_path: reports/tables/gat_uncertainty_calibration_metrics.csv
+  predictions_table_path: reports/tables/gat_uncertainty_spatial_test_predictions.csv
+  ablation_table_path: reports/tables/gat_uncertainty_feature_ablation.csv
+
+  figures_dir: reports/figures
+  checkpoints_dir: reports/checkpoints
+  logs_dir: reports/logs
+
+  checkpoint_name: gat_uncertainty_stage2_spatial_best.pt
+  training_history_name: gat_uncertainty_training_history.csv
+  reliability_table_name: gat_uncertainty_reliability_table.csv
+
+data:
+  split_type: spatial
+  target_name: y
+  target_transform: log1p
+  target_max_raw: 0.25
+
+  raw_feature_names:
+    - CFL.img
+    - FSP_Index.img
+    - Ignition_Prob.img
+    - Struct_Exp_Index.img
+    - Fuel_Models.img
+    - row_norm
+    - col_norm
+
+feature_engineering:
+  add_degree_feature: true
+  add_neighborhood_features: true
+  neighborhood_aggs:
+    - mean
+    - std
+    - max
+    - min
+    - residual
+    - contrast
+  add_two_hop_features: true
+  two_hop_aggs:
+    - mean
+    - std
+  add_feature_interactions: true
+  interaction_pairs:
+    - [CFL.img, Ignition_Prob.img]
+    - [Ignition_Prob.img, Fuel_Models.img]
+    - [Struct_Exp_Index.img, Fuel_Models.img]
+
+model:
+  stage1_name: graphsage
+  stage2_name: residual_gat
+
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.30
+  gat_heads: 4
+  gat_dropout: 0.20
+  use_jumping_knowledge: true
+
+  output_activation: bounded_sigmoid
+  predict_variance: true
+  min_variance: 1.0e-6
+
+  hybrid_enabled: false
+  num_risk_bins: 4
+  cls_loss_weight: 0.30
+
+training:
+  device: cpu
+  optimizer: adamw
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  max_epochs: 80
+  early_stopping_patience: 10
+  gradient_clip_norm: 5.0
+
+  loss_name: gaussian_nll
+  huber_delta: 0.02
+
+  target_bin_edges:
+    - 0.0
+    - 0.01
+    - 0.05
+    - 0.10
+    - 0.25
+  target_bin_weights:
+    - 1.0
+    - 2.0
+    - 4.0
+    - 6.0
+
+  cls_class_weights:
+    - 1.0
+    - 2.0
+    - 4.0
+    - 6.0
+
+uncertainty:
+  enable_mc_dropout: true
+  mc_samples: 20
+  temperature_scaling: false
+
+evaluation:
+  calibration_num_bins: 10
+  regression_bins:
+    - [0.0, 0.01]
+    - [0.01, 0.05]
+    - [0.05, 0.10]
+    - [0.10, 0.25]
