@@ -12,6 +12,7 @@ from torch_geometric.data import Data
 from wildfire_gnn.models.gnn_models import GraphSAGERegressor, ResidualGATRegressor
 from wildfire_gnn.training.losses import (
     build_target_weights,
+    classification_loss,
     gaussian_nll_loss,
     weighted_huber_loss,
     weighted_mse_loss,
@@ -47,7 +48,6 @@ class GNNPipeline:
     def _target_output_max(self) -> float:
         target_max_raw = float(self.config["data"]["target_max_raw"])
         transform = self.config["data"].get("target_transform", "none")
-
         if transform == "log1p":
             return float(np.log1p(target_max_raw))
         return target_max_raw
@@ -58,9 +58,17 @@ class GNNPipeline:
             return np.expm1(arr)
         return arr
 
+    def _build_risk_bins(self, y_raw: torch.Tensor) -> torch.Tensor:
+        edges = self.config["training"]["target_bin_edges"]
+        boundaries = torch.tensor(edges[1:-1], device=y_raw.device, dtype=y_raw.dtype)
+        return torch.bucketize(y_raw.view(-1), boundaries)
+
     def build_model(self, in_dim: int, stage: str = "stage1"):
         model_cfg = self.config["model"]
+
         predict_variance = model_cfg.get("predict_variance", False)
+        hybrid_enabled = model_cfg.get("hybrid_enabled", False)
+        num_risk_bins = model_cfg.get("num_risk_bins", 4)
         output_activation = model_cfg.get("output_activation", "none")
         output_max = self._target_output_max() if output_activation == "bounded_sigmoid" else None
 
@@ -76,9 +84,11 @@ class GNNPipeline:
                 num_layers=model_cfg["num_layers"],
                 dropout=model_cfg["dropout"],
                 predict_variance=predict_variance,
-                min_variance=model_cfg.get("min_variance", 1e-6),
+                min_variance=model_cfg["min_variance"],
                 output_activation=output_activation,
                 output_max=output_max,
+                hybrid_enabled=hybrid_enabled,
+                num_risk_bins=num_risk_bins,
             )
         elif name == "residual_gat":
             model = ResidualGATRegressor(
@@ -90,27 +100,25 @@ class GNNPipeline:
                 attn_dropout=model_cfg["gat_dropout"],
                 use_jk=model_cfg.get("use_jumping_knowledge", True),
                 predict_variance=predict_variance,
-                min_variance=model_cfg.get("min_variance", 1e-6),
+                min_variance=model_cfg["min_variance"],
                 output_activation=output_activation,
                 output_max=output_max,
+                hybrid_enabled=hybrid_enabled,
+                num_risk_bins=num_risk_bins,
             )
         else:
             raise ValueError(f"Unsupported model name: {name}")
 
         return model.to(self.device)
 
-    def _compute_loss(self, out, y, y_raw, mask):
+    def _compute_loss(self, out: dict, y: torch.Tensor, y_raw: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         train_cfg = self.config["training"]
+        model_cfg = self.config["model"]
         loss_name = train_cfg["loss_name"]
 
-        if isinstance(out, tuple):
-            mean, var = out
-        else:
-            mean, var = out, None
-
         y_mask = y[mask]
-        mean_mask = mean[mask]
-        y_raw_mask = y_raw[mask] if y_raw is not None else y_mask
+        y_raw_mask = y_raw[mask]
+        pred_mask = out["mean"][mask]
 
         weights = build_target_weights(
             target_raw=y_raw_mask,
@@ -119,38 +127,55 @@ class GNNPipeline:
         ).to(y.device)
 
         if loss_name == "weighted_huber":
-            return weighted_huber_loss(
-                pred=mean_mask,
+            reg_loss = weighted_huber_loss(
+                pred=pred_mask,
                 target=y_mask,
                 weights=weights,
                 delta=train_cfg["huber_delta"],
             )
-
-        if loss_name == "weighted_mse":
-            return weighted_mse_loss(
-                pred=mean_mask,
+        elif loss_name == "weighted_mse":
+            reg_loss = weighted_mse_loss(
+                pred=pred_mask,
                 target=y_mask,
                 weights=weights,
             )
+        elif loss_name == "gaussian_nll":
+            if "var" not in out:
+                raise ValueError("Gaussian NLL requires predict_variance=true")
+            reg_loss = gaussian_nll_loss(
+                mean=pred_mask,
+                var=out["var"][mask],
+                target=y_mask,
+            )
+        else:
+            reg_loss = torch.nn.functional.mse_loss(pred_mask, y_mask)
 
-        if loss_name == "gaussian_nll":
-            if var is None:
-                raise ValueError("Gaussian NLL requires model.predict_variance = true")
-            return gaussian_nll_loss(mean_mask, var[mask], y_mask)
+        if not model_cfg.get("hybrid_enabled", False):
+            return reg_loss
 
-        return torch.nn.functional.mse_loss(mean_mask, y_mask)
+        y_cls = self._build_risk_bins(y_raw)
+        class_weights = torch.tensor(
+            train_cfg["cls_class_weights"],
+            dtype=torch.float32,
+            device=y.device,
+        )
+        cls_loss = classification_loss(
+            logits=out["logits"][mask],
+            target_cls=y_cls[mask],
+            class_weights=class_weights,
+        )
+
+        total = reg_loss + model_cfg["cls_loss_weight"] * cls_loss
+        return total
 
     def train(self, data: Data, stage: str = "stage1") -> TrainOutputs:
         required_masks = ["train_mask", "val_mask", "test_mask"]
         for mask_name in required_masks:
             if not hasattr(data, mask_name):
-                raise ValueError(
-                    f"Data object is missing '{mask_name}'. "
-                    "Attach train/val/test masks before calling train()."
-                )
+                raise ValueError(f"Data object is missing '{mask_name}'.")
 
         data = data.to(self.device)
-        y_raw = data.y_raw if hasattr(data, "y_raw") else None
+        y_raw = data.y_raw if hasattr(data, "y_raw") else data.y.clone()
 
         model = self.build_model(in_dim=data.x.shape[1], stage=stage)
 
@@ -162,7 +187,12 @@ class GNNPipeline:
         )
 
         best_val_loss = float("inf")
-        best_model_path = self.checkpoints_dir / f"{stage}_{self.config['data']['split_type']}_best.pt"
+        checkpoint_name = self.config["paths"].get(
+            "checkpoint_name",
+            f"{stage}_{self.config['data']['split_type']}_best.pt"
+        )
+        best_model_path = self.checkpoints_dir / checkpoint_name
+
         patience = 0
         history_rows = []
 
@@ -201,7 +231,7 @@ class GNNPipeline:
                 break
 
         history = pd.DataFrame(history_rows)
-        history.to_csv(self.tables_dir / "gnn_training_history.csv", index=False)
+        history.to_csv(self.tables_dir / self.config["paths"]["training_history_name"], index=False)
 
         return TrainOutputs(
             best_model_path=str(best_model_path),
@@ -213,22 +243,46 @@ class GNNPipeline:
         data = data.to(self.device)
         model = self.build_model(in_dim=data.x.shape[1], stage=stage)
         model.load_state_dict(torch.load(checkpoint_path, map_location=self.device, weights_only=False))
-        model.eval()
 
+        mc_enabled = self.config["uncertainty"].get("enable_mc_dropout", False)
+        mc_samples = self.config["uncertainty"].get("mc_samples", 20)
+
+        if not mc_enabled:
+            model.eval()
+            with torch.no_grad():
+                out = model(data.x, data.edge_index)
+
+            mean = out["mean"]
+            if "var" in out:
+                unc = torch.sqrt(out["var"])
+            else:
+                unc = torch.zeros_like(mean)
+
+            return mean.detach().cpu().numpy(), unc.detach().cpu().numpy()
+
+        preds = []
+        vars_ = []
+
+        model.train()
         with torch.no_grad():
-            out = model(data.x, data.edge_index)
+            for _ in range(mc_samples):
+                out = model(data.x, data.edge_index)
+                preds.append(out["mean"])
+                if "var" in out:
+                    vars_.append(out["var"])
 
-        if isinstance(out, tuple):
-            mean, var = out
-            unc = torch.sqrt(var)
+        preds = torch.stack(preds, dim=0)
+        pred_mean = preds.mean(dim=0)
+        epistemic = preds.std(dim=0)
+
+        if vars_:
+            vars_ = torch.stack(vars_, dim=0)
+            aleatoric = torch.sqrt(vars_.mean(dim=0))
+            total_unc = torch.sqrt(epistemic ** 2 + aleatoric ** 2)
         else:
-            mean = out
-            unc = torch.zeros_like(mean)
+            total_unc = epistemic
 
-        return (
-            mean.detach().cpu().numpy(),
-            unc.detach().cpu().numpy(),
-        )
+        return pred_mean.cpu().numpy(), total_unc.cpu().numpy()
 
     def evaluate(self, data: Data, checkpoint_path: str, stage: str = "stage1") -> Dict[str, float]:
         preds, unc = self.predict(data, checkpoint_path, stage=stage)
@@ -263,7 +317,7 @@ class GNNPipeline:
                 y_unc=unc_test,
                 num_bins=self.config["evaluation"]["calibration_num_bins"],
             )
-            rel_df.to_csv(self.tables_dir / "gnn_reliability_table.csv", index=False)
+            rel_df.to_csv(self.tables_dir / self.config["paths"]["reliability_table_name"], index=False)
 
         metrics = {**overall, **calibration}
         pd.DataFrame([metrics]).to_csv(self.config["paths"]["metrics_table_path"], index=False)
