@@ -36,10 +36,6 @@ def build_target_weights(
     bin_edges: list[float],
     bin_weights: list[float],
 ) -> torch.Tensor:
-    """
-    Build weights from RAW target values, not transformed target.
-    target_raw shape: [N, 1]
-    """
     assert len(bin_edges) >= 2
     assert len(bin_weights) == len(bin_edges) - 1
 
@@ -56,3 +52,11 @@ def build_target_weights(
         weights[last_mask] = bin_weights[-1]
 
     return weights
+
+
+def classification_loss(
+    logits: torch.Tensor,
+    target_cls: torch.Tensor,
+    class_weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    return F.cross_entropy(logits, target_cls, weight=class_weights)
