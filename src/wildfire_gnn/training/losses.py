@@ -27,8 +27,12 @@ def gaussian_nll_loss(
     mean: torch.Tensor,
     var: torch.Tensor,
     target: torch.Tensor,
+    weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    return F.gaussian_nll_loss(mean, target, var, full=True)
+    loss = F.gaussian_nll_loss(mean, target, var, full=True, reduction="none")
+    if weights is not None:
+        loss = loss * weights
+    return loss.mean()
 
 
 def build_target_weights(
