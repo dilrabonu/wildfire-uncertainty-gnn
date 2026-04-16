@@ -37,6 +37,7 @@ data:
 
 feature_engineering:
   add_degree_feature: true
+
   add_neighborhood_features: true
   neighborhood_aggs:
     - mean
@@ -45,10 +46,12 @@ feature_engineering:
     - min
     - residual
     - contrast
+
   add_two_hop_features: true
   two_hop_aggs:
     - mean
     - std
+
   add_feature_interactions: true
   interaction_pairs:
     - [CFL.img, Ignition_Prob.img]
@@ -67,12 +70,13 @@ model:
   use_jumping_knowledge: true
 
   output_activation: bounded_sigmoid
+
   predict_variance: true
   min_variance: 1.0e-6
 
-  hybrid_enabled: false
+  hybrid_enabled: true
   num_risk_bins: 4
-  cls_loss_weight: 0.30
+  cls_loss_weight: 0.35
 
 training:
   device: cpu
@@ -84,7 +88,6 @@ training:
   gradient_clip_norm: 5.0
 
   loss_name: gaussian_nll
-  huber_delta: 0.02
 
   target_bin_edges:
     - 0.0
@@ -116,3 +119,8 @@ evaluation:
     - [0.01, 0.05]
     - [0.05, 0.10]
     - [0.10, 0.25]
+
+  high_risk_thresholds:
+    - 0.01
+    - 0.05
+    - 0.10
