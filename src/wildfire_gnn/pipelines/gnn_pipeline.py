@@ -131,7 +131,7 @@ class GNNPipeline:
                 pred=pred_mask,
                 target=y_mask,
                 weights=weights,
-                delta=train_cfg["huber_delta"],
+                delta=train_cfg.get("huber_delta", 0.02),
             )
         elif loss_name == "weighted_mse":
             reg_loss = weighted_mse_loss(
@@ -146,6 +146,7 @@ class GNNPipeline:
                 mean=pred_mask,
                 var=out["var"][mask],
                 target=y_mask,
+                weights=weights,
             )
         else:
             reg_loss = torch.nn.functional.mse_loss(pred_mask, y_mask)
@@ -159,6 +160,7 @@ class GNNPipeline:
             dtype=torch.float32,
             device=y.device,
         )
+
         cls_loss = classification_loss(
             logits=out["logits"][mask],
             target_cls=y_cls[mask],
@@ -318,6 +320,9 @@ class GNNPipeline:
                 num_bins=self.config["evaluation"]["calibration_num_bins"],
             )
             rel_df.to_csv(self.tables_dir / self.config["paths"]["reliability_table_name"], index=False)
+
+            cal_df = pd.DataFrame([{"regression_ece": ece}])
+            cal_df.to_csv(self.config["paths"]["calibration_metrics_table_path"], index=False)
 
         metrics = {**overall, **calibration}
         pd.DataFrame([metrics]).to_csv(self.config["paths"]["metrics_table_path"], index=False)
