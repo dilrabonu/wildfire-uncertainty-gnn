@@ -399,44 +399,88 @@ class WildfireFeatureEngineer:
         print(f"  Total features after pipeline: {len(self.feature_names_)}")
         return df_transformed, new_cols
 
-    def _spatial_split(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def _spatial_split(self, df):
+        """
+        Priority order:
+          1. baseline_splits_spatial.npz  (your existing per-pixel index split)
+          2. Pre-defined split_col in the dataframe
+          3. Pyrome-based split
+          4. Geographic block split (fallback)
+        """
+        import numpy as np
+        from pathlib import Path
+ 
         print(f"\n[Step 8] Spatial train/test split...")
+ 
+        # ── Priority 1: existing .npz split ──────────────────────────────────
+        npz_path = Path("data/processed/baseline_splits_spatial.npz")
+        if npz_path.exists():
+            splits     = np.load(npz_path, allow_pickle=True)
+            train_idx  = splits["train_idx"]
+            test_idx   = splits["test_idx"]
+ 
+            # The .npz indices may refer to the original 300k-row CSV.
+            # Clip to valid range in case df was filtered.
+            max_idx = len(df) - 1
+            train_idx = train_idx[train_idx <= max_idx]
+            test_idx  = test_idx[test_idx  <= max_idx]
+ 
+            df_train = df.iloc[train_idx].copy().reset_index(drop=True)
+            df_test  = df.iloc[test_idx ].copy().reset_index(drop=True)
+ 
+            print(f"   Loaded existing spatial split from {npz_path}")
+            print(f"     train={len(df_train)}, test={len(df_test)}")
+            print(f"     This matches your GNN experiment split exactly.")
+            return df_train, df_test
+ 
+        # ── Priority 2: pre-defined split column ─────────────────────────────
         split_col = self.cfg.get("split_col")
-        pyrome_col = self.cfg.get("pyrome_col", "Pyrome_ID")
-        test_size = self.cfg.get("test_size", 0.2)
-        seed = self.cfg.get("random_seed", 42)
-
         if split_col and split_col in df.columns:
             df_train = df[df[split_col] == "train"].copy()
-            df_test = df[df[split_col] == "test"].copy()
-            print(f"  Using pre-defined split: train={len(df_train)}, test={len(df_test)}")
-        elif pyrome_col and pyrome_col in df.columns:
+            df_test  = df[df[split_col] == "test" ].copy()
+            print(f"  Using split_col='{split_col}': "
+                  f"train={len(df_train)}, test={len(df_test)}")
+            return df_train.reset_index(drop=True), df_test.reset_index(drop=True)
+ 
+        # ── Priority 3: pyrome-based split ───────────────────────────────────
+        pyrome_col = self.cfg.get("pyrome_col")
+        test_size  = self.cfg.get("test_size", 0.2)
+        seed       = self.cfg.get("random_seed", 42)
+ 
+        if pyrome_col and pyrome_col in df.columns:
             pyromes = df[pyrome_col].unique()
-            rng = np.random.default_rng(seed)
-            n_test = max(1, int(len(pyromes) * test_size))
+            rng     = np.random.default_rng(seed)
+            n_test  = max(1, int(len(pyromes) * test_size))
             test_pyromes = rng.choice(pyromes, n_test, replace=False)
-            mask_test = df[pyrome_col].isin(test_pyromes)
+            mask_test    = df[pyrome_col].isin(test_pyromes)
             df_train = df[~mask_test].copy()
-            df_test = df[mask_test].copy()
-            print(f"  Pyrome-split: {len(pyromes)-n_test} train pyromes, {n_test} test pyromes")
-            print(f"  Rows: train={len(df_train)}, test={len(df_test)}")
+            df_test  = df[ mask_test].copy()
+            print(f"  Pyrome-split: "
+                  f"{len(pyromes)-n_test} train / {n_test} test pyromes, "
+                  f"rows: train={len(df_train)}, test={len(df_test)}")
+            return df_train.reset_index(drop=True), df_test.reset_index(drop=True)
+ 
+        # ── Priority 4: geographic block split (fallback) ────────────────────
+        row_col = self.cfg.get("row_col", "row")
+        if row_col in df.columns:
+            H, _    = self.raster_shape_
+            cutoff  = int(H * (1 - test_size))
+            mask_test = df[row_col] >= cutoff
+            reason = f"row cutoff at {cutoff}/{H}"
         else:
-            row_col = self.cfg.get("row_col", "row")
-            if row_col in df.columns:
-                H, _ = self.raster_shape_
-                cutoff = int(H * (1 - test_size))
-                mask_test = df[row_col] >= cutoff
-            else:
-                mask_test = np.zeros(len(df), dtype=bool)
-                test_idx = np.random.default_rng(seed).choice(
-                    len(df), int(len(df) * test_size), replace=False
-                )
-                mask_test[test_idx] = True
-
-            df_train = df[~mask_test].copy()
-            df_test = df[mask_test].copy()
-            print(f"  Geographic block split: train={len(df_train)}, test={len(df_test)}")
-
+            mask_test = np.zeros(len(df), dtype=bool)
+            test_idx  = np.random.default_rng(seed).choice(
+                len(df), int(len(df) * test_size), replace=False
+            )
+            mask_test[test_idx] = True
+            reason = "random (no row column found)"
+ 
+        df_train = df[~mask_test].copy()
+        df_test  = df[ mask_test].copy()
+        print(f"  Geographic block split ({reason}): "
+              f"train={len(df_train)}, test={len(df_test)}")
+        print(f"   Consider adding data/processed/baseline_splits_spatial.npz "
+              f"for experiment-aligned splits.")
         return df_train.reset_index(drop=True), df_test.reset_index(drop=True)
 
     def _transform_target(
