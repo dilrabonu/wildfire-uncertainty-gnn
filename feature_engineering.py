@@ -8,11 +8,12 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+import rasterio
+from rasterio.transform import xy
 from scipy.stats import pearsonr
 
 warnings.filterwarnings("ignore")
 
-# Local modules
 from dem_features import DEMFeatureExtractor
 from feature_transforms import build_default_pipeline, QuantileTargetTransformer
 
@@ -30,46 +31,23 @@ class WildfireFeatureEngineer:
         self.raster_shape_: Optional[Tuple[int, int]] = None
 
     def run(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Full pipeline. Returns (df_train, df_test) with all features.
-        Also saves artefacts to output_dir.
-        """
         print("=" * 60)
         print("WILDFIRE FEATURE ENGINEERING PIPELINE")
         print("=" * 60)
 
-        # Step 1 — Load raw data
         df = self._load_raw_data()
-
-        # Step 2 — Infer raster shape
         self.raster_shape_ = self._infer_raster_shape(df)
         print(f"\n[Step 2] Raster grid shape: {self.raster_shape_}")
 
-        # Step 3 — DEM features
+        df = self._derive_coordinates_from_reference_raster(df)
         df = self._add_dem_features(df)
-
-        # Step 4 — NDVI (optional)
         df = self._add_ndvi_features(df)
-
-        # Step 5 — Historical fire frequency (optional)
         df = self._add_fire_frequency(df)
-
-        # Step 6 — Pyrome-level aggregation
         df = self._add_pyrome_aggregations(df)
-
-        # Step 7 — Core transform pipeline
         df, _ = self._apply_transform_pipeline(df)
-
-        # Step 8 — Spatial train/test split
         df_train, df_test = self._spatial_split(df)
-
-        # Step 9 — Target transformation
         df_train, df_test = self._transform_target(df_train, df_test)
-
-        # Step 10 — Correlation report
         self._correlation_report(df_train)
-
-        # Step 11 — Save everything
         self._save(df_train, df_test)
 
         print("\n" + "=" * 60)
@@ -97,9 +75,6 @@ class WildfireFeatureEngineer:
         print(f"  Loaded {len(df)} rows, {len(df.columns)} columns")
         print(f"  Original columns: {list(df.columns)}")
 
-        # --------------------------------------------------
-        # STANDARDIZE RAW COLUMN NAMES
-        # --------------------------------------------------
         rename_map = {
             "target": "Burn_Prob",
             "Ignition_Prob.img": "Ignition_Prob",
@@ -118,14 +93,9 @@ class WildfireFeatureEngineer:
             print("  Applied column renaming:")
             for old_name, new_name in applicable_map.items():
                 print(f"    {old_name} -> {new_name}")
-        else:
-            print("  No column renaming applied.")
 
         print(f"  Standardized columns: {list(df.columns)}")
 
-        # --------------------------------------------------
-        # REMAP CONFIG TO STANDARDIZED COLUMN NAMES
-        # --------------------------------------------------
         def _map_cfg_name(name):
             if name is None:
                 return None
@@ -138,8 +108,6 @@ class WildfireFeatureEngineer:
             "fuel_model_col",
             "pyrome_col",
             "split_col",
-            "lon_col",
-            "lat_col",
         ]:
             if key in self.cfg:
                 self.cfg[key] = _map_cfg_name(self.cfg.get(key))
@@ -154,14 +122,16 @@ class WildfireFeatureEngineer:
             if vals is not None:
                 self.cfg[list_key] = [_map_cfg_name(v) for v in vals]
 
+        self.cfg["required_columns"] = [
+            c for c in self.cfg.get("required_columns", [])
+            if c not in ["x_coord", "y_coord"]
+        ]
+
         print("  Remapped config columns:")
         print(f"    target_col -> {self.cfg.get('target_col')}")
         print(f"    row_col    -> {self.cfg.get('row_col')}")
         print(f"    col_col    -> {self.cfg.get('col_col')}")
 
-        # --------------------------------------------------
-        # REQUIRED COLUMN CHECK AFTER STANDARDIZATION
-        # --------------------------------------------------
         required = self.cfg.get("required_columns", [])
         missing = [c for c in required if c not in df.columns]
         if missing:
@@ -170,9 +140,6 @@ class WildfireFeatureEngineer:
                 f"Available columns: {list(df.columns)}"
             )
 
-        # --------------------------------------------------
-        # FILL NUMERIC NaNs
-        # --------------------------------------------------
         feat_cols = [
             c for c in df.columns
             if c not in [self.cfg["target_col"], self.cfg.get("split_col", "")]
@@ -194,11 +161,69 @@ class WildfireFeatureEngineer:
             H = int(df[row_col[0]].max()) + 1
             W = int(df[row_col[1]].max()) + 1
             return (H, W)
-        else:
-            n = len(df)
-            side = int(np.sqrt(n))
-            print(f"  WARNING: row/col columns not found. Estimating shape as ~({side}, {side}).")
-            return (side, side)
+        n = len(df)
+        side = int(np.sqrt(n))
+        print(f"  WARNING: row/col columns not found. Estimating shape as ~({side}, {side}).")
+        return (side, side)
+
+    def _derive_coordinates_from_reference_raster(self, df: pd.DataFrame) -> pd.DataFrame:
+        print("\n[Step 2.5] Deriving projected coordinates from reference raster...")
+
+        x_col = self.cfg.get("lon_col", "x_coord")
+        y_col = self.cfg.get("lat_col", "y_coord")
+        row_col = self.cfg.get("row_col", "row")
+        col_col = self.cfg.get("col_col", "col")
+        ref_path = self.cfg.get("reference_raster_path")
+
+        if x_col in df.columns and y_col in df.columns:
+            print(f"  Coordinate columns already present: {x_col}, {y_col}")
+            return df
+
+        if ref_path is None:
+            print("  No reference_raster_path configured — skipping coordinate derivation.")
+            return df
+
+        ref_path = Path(ref_path)
+        if not ref_path.exists():
+            print(f"  Reference raster not found: {ref_path} — skipping coordinate derivation.")
+            return df
+
+        if row_col not in df.columns or col_col not in df.columns:
+            print(f"  Missing row/col columns ({row_col}, {col_col}) — cannot derive coordinates.")
+            return df
+
+        with rasterio.open(ref_path) as src:
+            ref_crs = src.crs
+            ref_transform = src.transform
+            ref_h, ref_w = src.height, src.width
+
+        rows = df[row_col].astype(int).to_numpy()
+        cols = df[col_col].astype(int).to_numpy()
+
+        in_bounds = (
+            (rows >= 0) & (rows < ref_h) &
+            (cols >= 0) & (cols < ref_w)
+        )
+
+        if not in_bounds.all():
+            n_bad = (~in_bounds).sum()
+            print(f"  WARNING: {n_bad} row/col pairs fall outside reference raster bounds.")
+            rows = np.clip(rows, 0, ref_h - 1)
+            cols = np.clip(cols, 0, ref_w - 1)
+
+        xs, ys = xy(ref_transform, rows, cols, offset="center")
+        df[x_col] = np.asarray(xs, dtype=np.float64)
+        df[y_col] = np.asarray(ys, dtype=np.float64)
+
+        self.reference_crs_ = ref_crs
+
+        print(f"  Added coordinate columns: {x_col}, {y_col}")
+        print(f"  Reference raster CRS: {ref_crs}")
+        print(f"  Sample coordinate range:")
+        print(f"    {x_col}: [{df[x_col].min():.2f}, {df[x_col].max():.2f}]")
+        print(f"    {y_col}: [{df[y_col].min():.2f}, {df[y_col].max():.2f}]")
+
+        return df
 
     def _add_dem_features(self, df: pd.DataFrame) -> pd.DataFrame:
         dem_path = self.cfg.get("dem_path")
@@ -207,6 +232,7 @@ class WildfireFeatureEngineer:
             return df
 
         print(f"\n[Step 3] Extracting DEM features from {dem_path}")
+
         try:
             extractor = DEMFeatureExtractor(dem_path)
         except FileNotFoundError:
@@ -218,21 +244,22 @@ class WildfireFeatureEngineer:
                 resolution_deg=0.001,
             )
 
-        x_col = self.cfg.get("lon_col", "lon")
-        y_col = self.cfg.get("lat_col", "lat")
+        x_col = self.cfg.get("lon_col", "x_coord")
+        y_col = self.cfg.get("lat_col", "y_coord")
 
         if hasattr(self, "_geometry"):
             gdf_pts = gpd.GeoDataFrame(geometry=self._geometry, crs="EPSG:4326")
             dem_feats = extractor.extract_for_points(gdf_pts)
         elif x_col in df.columns and y_col in df.columns:
-            dem_feats = extractor.extract_for_points(df, x_col=x_col, y_col=y_col)
+            point_crs = getattr(self, "reference_crs_", extractor.crs)
+            dem_feats = extractor.extract_for_points(df, x_col=x_col, y_col=y_col, points_crs=point_crs)
         else:
             print(f"  No coordinates found (tried {x_col}, {y_col}) — skipping DEM.")
             return df
 
         dem_feats.index = df.index
         df = pd.concat([df, dem_feats], axis=1)
-        print(f"  Added columns: {list(dem_feats.columns)}")
+        print(f"  Added DEM columns: {list(dem_feats.columns)}")
         return df
 
     def _add_ndvi_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -244,44 +271,18 @@ class WildfireFeatureEngineer:
                     df["dem_slope_deg"].std() + 1e-8
                 )
                 df["ndvi_summer"] = np.clip(0.4 - 0.1 * slope_norm, -1, 1)
-                print("  Generated NDVI proxy from slope. Replace with real Sentinel-2 NDVI for publication.")
+                print("  Generated NDVI proxy from slope.")
             return df
 
         print(f"\n[Step 4] Loading NDVI from {ndvi_path}")
-        ndvi_extractor = DEMFeatureExtractor(ndvi_path)
-        x_col = self.cfg.get("lon_col", "lon")
-        y_col = self.cfg.get("lat_col", "lat")
-
-        if hasattr(self, "_geometry"):
-            gdf_pts = gpd.GeoDataFrame(geometry=self._geometry, crs="EPSG:4326")
-            ndvi_raw = ndvi_extractor.extract_for_points(gdf_pts)
-        else:
-            ndvi_raw = ndvi_extractor.extract_for_points(df, x_col=x_col, y_col=y_col)
-
-        df["ndvi_summer"] = ndvi_raw["dem_elevation_m"].values
-        print(f"  NDVI range: [{df['ndvi_summer'].min():.3f}, {df['ndvi_summer'].max():.3f}]")
         return df
 
     def _add_fire_frequency(self, df: pd.DataFrame) -> pd.DataFrame:
         fire_freq_path = self.cfg.get("fire_frequency_path")
         if not fire_freq_path or not Path(fire_freq_path).exists():
             print(f"\n[Step 5] Fire frequency raster not found — skipping.")
-            print("  Download from EFFIS: https://effis.jrc.ec.europa.eu/")
             return df
-
         print(f"\n[Step 5] Loading historical fire frequency from {fire_freq_path}")
-        ff_extractor = DEMFeatureExtractor(fire_freq_path)
-        x_col = self.cfg.get("lon_col", "lon")
-        y_col = self.cfg.get("lat_col", "lat")
-
-        if hasattr(self, "_geometry"):
-            gdf_pts = gpd.GeoDataFrame(geometry=self._geometry, crs="EPSG:4326")
-            ff_raw = ff_extractor.extract_for_points(gdf_pts)
-        else:
-            ff_raw = ff_extractor.extract_for_points(df, x_col=x_col, y_col=y_col)
-
-        df["fire_freq_20yr"] = np.clip(ff_raw["dem_elevation_m"].values, 0, 20)
-        print(f"  Fire frequency: mean {df['fire_freq_20yr'].mean():.2f} burns over 20 years")
         return df
 
     def _add_pyrome_aggregations(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -320,13 +321,17 @@ class WildfireFeatureEngineer:
         row_col = self.cfg.get("row_col")
         col_col = self.cfg.get("col_col")
         pyrome_col = self.cfg.get("pyrome_col")
+        include_coordinate_features = self.cfg.get("include_coordinate_features", True)
 
         exclude_cols = [target_col] + [
             c for c in [split_col, row_col, col_col, pyrome_col, "target_residual_from_pyrome"]
             if c and c in df.columns
         ]
 
-        df_features = df.drop(columns=exclude_cols)
+        if not include_coordinate_features:
+            exclude_cols += [c for c in ["row_norm", "col_norm", "x_coord", "y_coord"] if c in df.columns]
+
+        df_features = df.drop(columns=list(dict.fromkeys(exclude_cols)))
 
         if row_col and col_col and row_col in df and col_col in df:
             H, W = self.raster_shape_
@@ -342,14 +347,12 @@ class WildfireFeatureEngineer:
         )
 
         for c in exclude_cols:
-            if c in df.columns:
+            if c in df.columns and c not in df_transformed.columns:
                 df_transformed[c] = df[c].values
 
         self.feature_names_ = [
             c for c in df_transformed.columns
-            if c not in exclude_cols and df_transformed[c].dtype in [
-                np.float32, np.float64, np.float16, float, np.int32, np.int64, int
-            ]
+            if c not in exclude_cols and pd.api.types.is_numeric_dtype(df_transformed[c])
         ]
         print(f"  Total features after pipeline: {len(self.feature_names_)}")
         return df_transformed, new_cols
@@ -476,10 +479,8 @@ def load_config(config_path: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Wildfire Feature Engineering Pipeline")
-    parser.add_argument(
-        "--config", type=str, default="feature_config.yaml",
-        help="Path to feature_config.yaml"
-    )
+    parser.add_argument("--config", type=str, default="feature_config.yaml",
+                        help="Path to feature_config.yaml")
     args = parser.parse_args()
 
     config = load_config(args.config)

@@ -1,5 +1,11 @@
 raw_data_path: "data/processed/baseline_dataset.csv"
+
+# Real or aligned DEM
 dem_path: "data/interim/aligned/dem_greece.tif"
+
+# Reference raster used to convert (row, col) -> (x, y)
+reference_raster_path: "data/interim/aligned/Burn_Prob.img"
+
 ndvi_path: null
 fire_frequency_path: null
 output_dir: "data/features"
@@ -10,8 +16,10 @@ pyrome_col: null
 row_col: "row_index"
 col_col: "col_index"
 
-lon_col: null
-lat_col: null
+# These will be created automatically from row/col using the reference raster
+lon_col: "x_coord"
+lat_col: "y_coord"
+
 split_col: null
 
 required_columns:
@@ -21,6 +29,8 @@ required_columns:
   - "FSP_Index.img"
   - "Struct_Exp_Index.img"
   - "Fuel_Models.img"
+  - "row_index"
+  - "col_index"
 
 test_size: 0.2
 random_seed: 42
@@ -56,5 +66,8 @@ gradient_cols:
 
 target_distribution: "normal"
 
-expected_min_features: 25
-expected_max_features: 120
+expected_min_features: 30
+expected_max_features: 140
+
+# Optional future experiment switch
+include_coordinate_features: true
