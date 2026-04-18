@@ -4,11 +4,9 @@ ndvi_path: null
 fire_frequency_path: null
 output_dir: "data/features"
 
-# IMPORTANT: use RAW column name
 target_col: "target"
 pyrome_col: null
 
-# IMPORTANT: use RAW names
 row_col: "row_index"
 col_col: "col_index"
 
@@ -16,7 +14,6 @@ lon_col: null
 lat_col: null
 split_col: null
 
-# MUST match CSV EXACTLY
 required_columns:
   - "target"
   - "Ignition_Prob.img"
@@ -34,7 +31,6 @@ bbox_greece:
   - 27.0
   - 42.0
 
-# Use RAW names here too
 log_transform_cols:
   - "CFL.img"
   - "FSP_Index.img"
