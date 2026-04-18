@@ -35,19 +35,41 @@ class WildfireFeatureEngineer:
         print("WILDFIRE FEATURE ENGINEERING PIPELINE")
         print("=" * 60)
 
+        # Step 1 — load and standardize
         df = self._load_raw_data()
+
+        # Step 2 — infer raster shape
         self.raster_shape_ = self._infer_raster_shape(df)
         print(f"\n[Step 2] Raster grid shape: {self.raster_shape_}")
 
+        # Step 2.5 — derive projected coordinates from row/col
         df = self._derive_coordinates_from_reference_raster(df)
+
+        # Step 3 — DEM features
         df = self._add_dem_features(df)
+
+        # Step 4 — NDVI
         df = self._add_ndvi_features(df)
+
+        # Step 5 — Historical fire frequency
         df = self._add_fire_frequency(df)
+
+        # Step 6 — Pyrome-level aggregation
         df = self._add_pyrome_aggregations(df)
+
+        # Step 7 — Feature transformations
         df, _ = self._apply_transform_pipeline(df)
+
+        # Step 8 — Spatial train/test split
         df_train, df_test = self._spatial_split(df)
+
+        # Step 9 — Target transformation
         df_train, df_test = self._transform_target(df_train, df_test)
+
+        # Step 10 — Correlation report
         self._correlation_report(df_train)
+
+        # Step 11 — Save outputs
         self._save(df_train, df_test)
 
         print("\n" + "=" * 60)
@@ -75,6 +97,7 @@ class WildfireFeatureEngineer:
         print(f"  Loaded {len(df)} rows, {len(df.columns)} columns")
         print(f"  Original columns: {list(df.columns)}")
 
+        # Standardize raw column names
         rename_map = {
             "target": "Burn_Prob",
             "Ignition_Prob.img": "Ignition_Prob",
@@ -96,6 +119,7 @@ class WildfireFeatureEngineer:
 
         print(f"  Standardized columns: {list(df.columns)}")
 
+        # Remap config column references into standardized names
         def _map_cfg_name(name):
             if name is None:
                 return None
@@ -122,6 +146,7 @@ class WildfireFeatureEngineer:
             if vals is not None:
                 self.cfg[list_key] = [_map_cfg_name(v) for v in vals]
 
+        # x_coord / y_coord are derived later, so they are never required here
         self.cfg["required_columns"] = [
             c for c in self.cfg.get("required_columns", [])
             if c not in ["x_coord", "y_coord"]
@@ -132,6 +157,7 @@ class WildfireFeatureEngineer:
         print(f"    row_col    -> {self.cfg.get('row_col')}")
         print(f"    col_col    -> {self.cfg.get('col_col')}")
 
+        # Required-column check after standardization
         required = self.cfg.get("required_columns", [])
         missing = [c for c in required if c not in df.columns]
         if missing:
@@ -140,6 +166,7 @@ class WildfireFeatureEngineer:
                 f"Available columns: {list(df.columns)}"
             )
 
+        # Fill numeric NaNs
         feat_cols = [
             c for c in df.columns
             if c not in [self.cfg["target_col"], self.cfg.get("split_col", "")]
@@ -161,6 +188,7 @@ class WildfireFeatureEngineer:
             H = int(df[row_col[0]].max()) + 1
             W = int(df[row_col[1]].max()) + 1
             return (H, W)
+
         n = len(df)
         side = int(np.sqrt(n))
         print(f"  WARNING: row/col columns not found. Estimating shape as ~({side}, {side}).")
@@ -252,14 +280,23 @@ class WildfireFeatureEngineer:
             dem_feats = extractor.extract_for_points(gdf_pts)
         elif x_col in df.columns and y_col in df.columns:
             point_crs = getattr(self, "reference_crs_", extractor.crs)
-            dem_feats = extractor.extract_for_points(df, x_col=x_col, y_col=y_col, points_crs=point_crs)
+            dem_feats = extractor.extract_for_points(
+                df,
+                x_col=x_col,
+                y_col=y_col,
+                points_crs=point_crs,
+            )
         else:
             print(f"  No coordinates found (tried {x_col}, {y_col}) — skipping DEM.")
             return df
 
         dem_feats.index = df.index
         df = pd.concat([df, dem_feats], axis=1)
+
         print(f"  Added DEM columns: {list(dem_feats.columns)}")
+        for c in dem_feats.columns:
+            print(f"    {c}: mean={dem_feats[c].mean():.4f}, std={dem_feats[c].std():.4f}")
+
         return df
 
     def _add_ndvi_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -282,6 +319,7 @@ class WildfireFeatureEngineer:
         if not fire_freq_path or not Path(fire_freq_path).exists():
             print(f"\n[Step 5] Fire frequency raster not found — skipping.")
             return df
+
         print(f"\n[Step 5] Loading historical fire frequency from {fire_freq_path}")
         return df
 
@@ -321,15 +359,17 @@ class WildfireFeatureEngineer:
         row_col = self.cfg.get("row_col")
         col_col = self.cfg.get("col_col")
         pyrome_col = self.cfg.get("pyrome_col")
-        include_coordinate_features = self.cfg.get("include_coordinate_features", True)
+        include_coordinate_features = self.cfg.get("include_coordinate_features", False)
 
+        # Always exclude target + indexing columns
         exclude_cols = [target_col] + [
             c for c in [split_col, row_col, col_col, pyrome_col, "target_residual_from_pyrome"]
             if c and c in df.columns
         ]
 
+        # x_coord / y_coord used for DEM extraction, but not final model features
         if not include_coordinate_features:
-            exclude_cols += [c for c in ["row_norm", "col_norm", "x_coord", "y_coord"] if c in df.columns]
+            exclude_cols += [c for c in ["x_coord", "y_coord"] if c in df.columns]
 
         df_features = df.drop(columns=list(dict.fromkeys(exclude_cols)))
 
@@ -346,6 +386,7 @@ class WildfireFeatureEngineer:
             pixel_indices=pixel_indices,
         )
 
+        # Re-attach excluded cols for bookkeeping / splitting / diagnostics
         for c in exclude_cols:
             if c in df.columns and c not in df_transformed.columns:
                 df_transformed[c] = df[c].values
@@ -354,6 +395,7 @@ class WildfireFeatureEngineer:
             c for c in df_transformed.columns
             if c not in exclude_cols and pd.api.types.is_numeric_dtype(df_transformed[c])
         ]
+
         print(f"  Total features after pipeline: {len(self.feature_names_)}")
         return df_transformed, new_cols
 

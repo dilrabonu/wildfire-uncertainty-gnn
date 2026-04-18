@@ -1,9 +1,9 @@
 raw_data_path: "data/processed/baseline_dataset.csv"
 
-# Real or aligned DEM
+# DEM raster used for terrain extraction
 dem_path: "data/interim/aligned/dem_greece.tif"
 
-# Reference raster used to convert (row, col) -> (x, y)
+# Reference raster used to convert (row, col) -> projected (x, y)
 reference_raster_path: "data/interim/aligned/Burn_Prob.img"
 
 ndvi_path: null
@@ -16,7 +16,7 @@ pyrome_col: null
 row_col: "row_index"
 col_col: "col_index"
 
-# These will be created automatically from row/col using the reference raster
+# These are created automatically from row/col using the reference raster
 lon_col: "x_coord"
 lat_col: "y_coord"
 
@@ -69,5 +69,7 @@ target_distribution: "normal"
 expected_min_features: 30
 expected_max_features: 140
 
-# Optional future experiment switch
-include_coordinate_features: true
+# Main cleaned feature set:
+# keep compact row_norm/col_norm if present,
+# but do not keep x_coord/y_coord as final model inputs
+include_coordinate_features: false
