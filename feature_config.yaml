@@ -1,0 +1,81 @@
+# WILDFIRE FEATURE ENGINEERING CONFIG
+# Recommended professional version
+# Assumes raw CSV columns are renamed inside
+# feature_engineering.py after loading.
+
+
+# DATA PATHS
+-
+raw_data_path: "data/processed/baseline_dataset.csv"
+dem_path: "data/interim/aligned/dem_greece.tif"
+ndvi_path: null
+fire_frequency_path: null
+output_dir: "data/features"
+
+
+# CORE COLUMN NAMES
+# These are the STANDARDIZED names
+# used AFTER renaming in feature_engineering.py
+
+target_col: "Burn_Prob"
+pyrome_col: null
+
+row_col: "row"
+col_col: "col"
+
+lon_col: null
+lat_col: null
+split_col: null
+
+# REQUIRED COLUMNS
+# These are checked after renaming
+
+required_columns:
+  - "Burn_Prob"
+  - "Ignition_Prob"
+  - "CFL"
+  - "FSP_Index"
+  - "Struct_Exp_Index"
+  - "Fuel_Models"
+
+# SPLIT SETTINGS
+
+test_size: 0.2
+random_seed: 42
+
+bbox_greece:
+  - 20.0
+  - 37.0
+  - 27.0
+  - 42.0
+
+# FEATURE TRANSFORM SETTINGS
+
+log_transform_cols:
+  - "CFL"
+  - "FSP_Index"
+  - "Struct_Exp_Index"
+  - "Ignition_Prob"
+
+fuel_model_col: "Fuel_Models"
+fuel_max_categories: 20
+
+multiscale_window_sizes:
+  - 3
+  - 7
+  - 15
+
+multiscale_feature_cols:
+  - "Ignition_Prob"
+  - "CFL"
+  - "FSP_Index"
+
+gradient_cols:
+  - "Ignition_Prob"
+  - "CFL"
+
+target_distribution: "normal"
+
+# VALIDATION EXPECTATIONS
+expected_min_features: 25
+expected_max_features: 120

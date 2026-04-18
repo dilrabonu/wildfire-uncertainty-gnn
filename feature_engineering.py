@@ -127,24 +127,58 @@ class WildfireFeatureEngineer:
         elif raw_path.suffix in [".gpkg", ".shp"]:
             gdf = gpd.read_file(raw_path)
             df = pd.DataFrame(gdf.drop(columns="geometry"))
-            # Store geometry separately for DEM extraction
             self._geometry = gdf.geometry
         else:
             raise ValueError(f"Unsupported format: {raw_path.suffix}")
 
         print(f"  Loaded {len(df)} rows, {len(df.columns)} columns")
-        print(f"  Columns: {list(df.columns)}")
+        print(f"  Original columns: {list(df.columns)}")
+        
+    # STANDARDIZE RAW COLUMN NAMES
+    
+        rename_map = {
+            "target": "Burn_Prob",
+            "Ignition_Prob.img": "Ignition_Prob",
+            "CFL.img": "CFL",
+            "FSP_Index.img": "FSP_Index",
+            "Struct_Exp_Index.img": "Struct_Exp_Index",
+            "Fuel_Models.img": "Fuel_Models",
+            "row_index": "row",
+            "col_index": "col",
+        }
 
+        cols_before = set(df.columns)
+        applicable_map = {k: v for k, v in rename_map.items() if k in df.columns}
+        df = df.rename(columns=applicable_map)
+
+        if applicable_map:
+            print("  Applied column renaming:")
+            for old_name, new_name in applicable_map.items():
+                print(f"    {old_name} -> {new_name}")
+        else:
+            print("  No column renaming applied.")
+
+        print(f"  Standardized columns: {list(df.columns)}")
+
+    # REQUIRED COLUMN CHECK
+    
         required = self.cfg.get("required_columns", [])
         missing = [c for c in required if c not in df.columns]
         if missing:
-            raise ValueError(f"Missing required columns: {missing}")
+            raise ValueError(
+                f"Missing required columns after renaming: {missing}\n"
+                f"Available columns: {list(df.columns)}"
+            )
 
-        # Fill any NaNs in feature columns with median
-        feat_cols = [c for c in df.columns
-                     if c not in [self.cfg["target_col"], self.cfg.get("split_col", "")]]
+    # FILL NUMERIC NaNs
+   
+        feat_cols = [
+            c for c in df.columns
+            if c not in [self.cfg["target_col"], self.cfg.get("split_col", "")]
+        ]
+
         for c in feat_cols:
-            if df[c].dtype in [np.float32, np.float64, float]:
+            if pd.api.types.is_numeric_dtype(df[c]):
                 med = df[c].median()
                 n_nan = df[c].isna().sum()
                 if n_nan > 0:
