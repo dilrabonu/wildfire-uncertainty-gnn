@@ -1,0 +1,158 @@
+# All configuration for the wildfire feature engineering pipeline.
+# Edit paths to match your project structure, then run:
+#   python prepare_features.py --config feature_config.yaml
+#
+# Every key is documented below.
+
+# Your main node-level dataset (one row per pixel/node).
+# Supported: .parquet, .csv, .gpkg, .shp
+# Must contain at minimum: target_col + required_columns below.
+raw_data_path: "data/processed/wildfire_nodes.parquet"
+
+# DEM raster — SRTM 30m or EU-DEM.
+# Download: https://earthexplorer.usgs.gov/  (choose SRTM 1-Arc-Second Global)
+# Or EU-DEM: https://land.copernicus.eu/imagery-in-situ/eu-dem
+# Mosaic tiles for Greece (roughly 20–27°E, 35–42°N), then clip to your extent.
+# Leave as null to use a synthetic DEM (development only).
+dem_path: "data/rasters/dem_greece.tif"
+
+# NDVI raster — Sentinel-2 or MODIS summer average (June–August).
+# Download: https://scihub.copernicus.eu/ (Copernicus Open Access Hub)
+# Product: S2 L2A, Band 4 (Red) and Band 8 (NIR) → compute NDVI offline.
+# Or use MODIS MOD13A3: https://lpdaac.usgs.gov/products/mod13a3v006/
+# Leave as null to use a slope-based proxy.
+ndvi_path: "data/rasters/ndvi_summer.tif"
+
+# Historical fire frequency raster (times burned 2000–2023).
+# Download: EFFIS burned area maps → https://effis.jrc.ec.europa.eu/
+# Or JRC GWIS: https://gwis.jrc.ec.europa.eu/apps/gwis.statistics/
+# Rasterize to your spatial resolution. Leave as null to skip.
+fire_frequency_path: "data/rasters/fire_frequency_20yr.tif"
+
+# Where to save all pipeline outputs (parquets, transformer, reports).
+output_dir: "data/features"
+
+
+# Target variable (the column to predict).
+target_col: "Burn_Prob"
+
+# Pyrome zone identifier column.
+# Used for: pyrome aggregation features, spatially-disjoint train/test split.
+# Set to null if your data has no pyrome column.
+pyrome_col: "Pyrome_ID"
+
+# Raster grid indices — row/col pixel position in the original raster.
+# Used for: multi-scale stats, gradients, connectivity (need full raster grid).
+# Set to null if unavailable (will use approximate shape estimation).
+row_col: "row"
+col_col: "col"
+
+# Geographic coordinate columns (WGS84 decimal degrees).
+# Used for: DEM extraction, NDVI extraction.
+lon_col: "lon"   # or "x", "longitude", "easting" — rename to match
+lat_col: "lat"   # or "y", "latitude",  "northing"
+
+# Pre-defined split column. Set to null to use automatic splitting.
+# If set, the column must contain values "train" and "test".
+split_col: null
+
+# Pipeline will fail with a clear error if these are missing.
+required_columns:
+  - "Burn_Prob"
+  - "Ignition_Prob"
+  - "CFL"
+  - "FSP_Index"
+  - "Struct_Exp_Index"
+  - "Fuel_Models"
+
+
+# Fraction of pyromes (or geographic area) to hold out for testing.
+test_size: 0.2
+
+# Controls all random operations (split, synthetic DEM noise).
+random_seed: 42
+
+# Used ONLY when dem_path does not exist — generates a fake DEM for development.
+# Format: [min_lon, min_lat, max_lon, max_lat] in WGS84.
+# Default: mainland Greece + islands.
+bbox_greece:
+  - 20.0
+  - 37.0
+  - 27.0
+  - 42.0
+
+
+# Columns to apply log1p before z-scoring.
+# These should be all right-skewed raster features.
+log_transform_cols:
+  - "CFL"
+  - "FSP_Index"
+  - "Struct_Exp_Index"
+  - "Ignition_Prob"
+
+# Fuel model column name (will be one-hot encoded).
+fuel_model_col: "Fuel_Models"
+
+# How many distinct fuel model values to keep.
+# Rarer values → pooled into "other" category.
+fuel_max_categories: 20
+
+# Multi-scale neighborhood window sizes (must be odd integers).
+# Computes mean + std at each scale for each feature in multiscale_feature_cols.
+multiscale_window_sizes:
+  - 3
+  - 7
+  - 15
+
+# Features to compute multi-scale stats for.
+multiscale_feature_cols:
+  - "Ignition_Prob"
+  - "CFL"
+  - "FSP_Index"
+
+# Features to compute spatial gradients for.
+gradient_cols:
+  - "Ignition_Prob"
+  - "CFL"
+
+# Target quantile transformation output distribution.
+# "normal" → maps to ~Gaussian. "uniform" → maps to [0,1] uniform.
+# "normal" is recommended for Gaussian NLL loss.
+target_distribution: "normal"
+
+
+# After pipeline runs, diagnostics will warn if counts are off.
+# Update these after your first successful run.
+expected_min_features: 30   # with DEM + multi-scale + gradients
+expected_max_features: 120  # cap to detect explosion
+
+# Feature groups and their justification (for paper Methods section):
+#
+# DEM terrain (slope, aspect_sin, aspect_cos, elevation, TWI):
+#   Slope is the single strongest physical predictor in the Rothermel fire spread
+#   model. Aspect determines solar radiation loading and fuel moisture content.
+#   TWI predicts soil moisture which affects fuel dryness.
+#
+# NDVI:
+#   Summer NDVI captures canopy density and fuel moisture state,
+#   outperforming categorical fuel model codes for continuous risk prediction.
+#
+# Historical fire frequency:
+#   Locations burned repeatedly indicate recurring fire weather conditions
+#   and persistent fuel accumulation — a strong proxy for long-term risk.
+#
+# Pyrome aggregations:
+#   Provide regional context for each node: how does local risk compare
+#   to the surrounding fire regime zone? Enables residual risk modeling.
+#
+# Multi-scale neighborhood statistics:
+#   Explicit version of what CNN implicitly learns — local texture at
+#   multiple spatial scales. Critical for GNN node discriminability.
+#
+# Spatial gradients:
+#   Capture fire spread directionality: risk increases fastest along
+#   the gradient of ignition probability and fuel continuity.
+#
+# Interaction terms:
+#   Ignition × Fuel captures joint risk: a highly ignitable location
+#   in heavy fuel is categorically different risk from either alone.
