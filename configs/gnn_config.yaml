@@ -3,10 +3,14 @@ project:
   random_seed: 42
 
 paths:
-  graph_data_path: data/processed/graph_data.pt
+  # ── UPDATED: use enriched 58-feature graph from Phase 5.4 ──
+  graph_data_path: data/processed/graph_data_enriched.pt
+
   baseline_dataset_path: data/processed/baseline_dataset.csv
+
+  # ── UPDATED: use Phase 5.4 split (train/val/test all populated) ──
   random_split_path: data/processed/baseline_splits_random.npz
-  spatial_split_path: data/processed/baseline_splits_spatial.npz
+  spatial_split_path: data/features/splits_phase54.npz
 
   outputs_root: reports
   metrics_table_path: reports/tables/gnn_metrics.csv
@@ -14,7 +18,6 @@ paths:
   calibration_metrics_table_path: reports/tables/gnn_calibration_metrics.csv
   predictions_table_path: reports/tables/gnn_spatial_test_predictions.csv
   ablation_table_path: reports/tables/gnn_feature_ablation.csv
-
   figures_dir: reports/figures
   checkpoints_dir: reports/checkpoints
   logs_dir: reports/logs
@@ -22,68 +25,68 @@ paths:
 data:
   split_type: spatial
   train_ratio: 0.70
-  val_ratio: 0.15
-  test_ratio: 0.15
-
+  val_ratio: 0.10
+  test_ratio: 0.20
   target_name: y
-  use_edge_weight: false
-  num_node_features_raw: 7
 
-  target_transform: log1p
+  use_edge_weight: false
+
+  # ── UPDATED: 58 enriched features, not 7 raw ──
+  num_node_features_raw: 58
+
+  # ── UPDATED: quantile transform already applied in Phase 5.4 pipeline ──
+  # The graph's y values are already quantile-transformed (near-Gaussian).
+  # Set to "none" so the notebook does NOT re-apply log1p on top.
+  target_transform: none
   target_max_raw: 0.25
 
 feature_engineering:
-  enable: true
+  # ── UPDATED: disable in-notebook feature engineering ──
+  # All 58 features (multi-scale stats, DEM, fuel one-hot, gradients,
+  # interaction terms) are already embedded in graph_data_enriched.pt.
+  # Re-running feature engineering here would double-count them.
+  enable: false
 
-  continuous_feature_names:
-    - CFL.img
-    - FSP_Index.img
-    - Ignition_Prob.img
-    - Struct_Exp_Index.img
-    - row_norm
-    - col_norm
+  # Kept for reference — these are now pre-computed in the enriched graph:
+  # CFL, FSP_Index, Ignition_Prob, Struct_Exp_Index (base raster)
+  # dem_elevation_m, dem_slope_deg, dem_aspect_sin, dem_aspect_cos, dem_twi
+  # ndvi_summer
+  # fuel_101.0 ... fuel_other (21 one-hot columns)
+  # inter_ignition_x_cfl, inter_ignition_x_struct, inter_cfl_x_fsp
+  # Ignition_Prob_mean3/7/15, Ignition_Prob_std3/7/15 (multi-scale)
+  # CFL_mean3/7/15, CFL_std3/7/15
+  # FSP_Index_mean3/7/15, FSP_Index_std3/7/15
+  # Ignition_Prob_grad_row/col/mag
+  # CFL_grad_row/col/mag
 
-  categorical_feature_names:
-    - Fuel_Models.img
-
-  transform_continuous: true
-  transform_method: sqrt_scaled
-  clip_quantile_low: 0.001
-  clip_quantile_high: 0.999
-
-  encode_fuel: onehot
-  fuel_embedding_dim: 8
-
-  add_degree_feature: true
-  add_neighborhood_features: true
-  neighborhood_aggs:
-    - mean
-    - std
-    - max
-    - residual
-
-  keep_coordinates: true
+  add_degree_feature: false
+  add_neighborhood_features: false
+  neighborhood_aggs: []
+  add_two_hop_features: false
+  two_hop_aggs: []
+  add_feature_interactions: false
+  interaction_pairs: []
 
 model:
   stage1_name: graphsage
   stage2_name: residual_gat
 
+  # ── UPDATED: input is 58 enriched features ──
+  # hidden_dim kept at 128 — appropriate for 58-dim input
   hidden_dim: 128
   num_layers: 3
   dropout: 0.30
   use_batch_norm: true
   use_residual: true
-
   sage_aggr: mean
-
   gat_heads: 4
   gat_dropout: 0.20
   use_jumping_knowledge: true
   jk_mode: cat
 
+  # ── Uncertainty: enable for Phase 5.7 (keep false for Phase 5.5) ──
   predict_variance: false
   min_variance: 1.0e-6
-
   output_activation: bounded_sigmoid
 
 training:
@@ -95,9 +98,11 @@ training:
   early_stopping_patience: 10
   gradient_clip_norm: 5.0
 
+  # ── UPDATED: Gaussian NLL pairs with quantile-transformed target ──
+  # Target is already ~Gaussian from Phase 5.4 QuantileTransformer.
+  # weighted_huber also works — keep for now, switch to gaussian_nll in Phase 5.7.
   loss_name: weighted_huber
   huber_delta: 0.02
-
   target_reweighting: true
   target_bin_edges:
     - 0.0
@@ -119,13 +124,11 @@ uncertainty:
 evaluation:
   save_predictions: true
   save_figures: true
-
   calibration_num_bins: 10
   high_risk_thresholds:
     - 0.01
     - 0.05
     - 0.10
-
   regression_bins:
     - [0.0, 0.01]
     - [0.01, 0.05]
@@ -136,7 +139,7 @@ ablation:
   run_feature_ablation: true
   feature_sets:
     - all_features
-    - no_coordinates
-    - no_fuel
-    - coordinates_only
-    - fuel_and_coordinates
+    - no_dem
+    - no_multiscale
+    - no_fuel_onehot
+    - base_only

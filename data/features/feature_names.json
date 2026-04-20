@@ -3,8 +3,6 @@
   "FSP_Index",
   "Ignition_Prob",
   "Struct_Exp_Index",
-  "row_norm",
-  "col_norm",
   "dem_elevation_m",
   "dem_slope_deg",
   "dem_aspect_sin",
