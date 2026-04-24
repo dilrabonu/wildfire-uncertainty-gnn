@@ -56,7 +56,7 @@ model:
   jk_mode: cat
   predict_variance: false
   min_variance: 1.0e-6
-  output_activation: bounded_sigmoid
+  output_activation: linear
 
 training:
   device: cpu
@@ -66,7 +66,7 @@ training:
   max_epochs: 80
   early_stopping_patience: 10
   gradient_clip_norm: 5.0
-  loss_name: weighted_huber
+  loss_name:  mse
   huber_delta: 0.02
   target_reweighting: true
   target_bin_edges:
