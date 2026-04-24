@@ -66,7 +66,7 @@ training:
   max_epochs: 80
   early_stopping_patience: 10
   gradient_clip_norm: 5.0
-  loss_name:  mse
+  loss_name: mse
   huber_delta: 0.02
   target_reweighting: true
   target_bin_edges:
