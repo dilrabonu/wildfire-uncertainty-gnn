@@ -13,7 +13,6 @@ This project studies wildfire spread prediction using graph neural networks with
 
 ## Repository Structure
 
-
 ## Setup
 
 
