@@ -14,8 +14,6 @@ This project studies wildfire spread prediction using graph neural networks with
 ## Repository Structure
 
 ## Setup
-
-
 ## Current Status
 Phase 0: Repository setup  
 Phase 1: Problem definition and literature review
