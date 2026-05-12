@@ -35,4 +35,4 @@ https://zenodo.org/records/17579289?jr_id=l_null
 https://www.sciencedirect.com/science/article/pii/S2352340925010248 
 
 ## Author
-Dilrabo Khidirova
+Dilrabo Khidirova | AI/ML Engineer
